@@ -161,15 +161,19 @@ func (f *FSM) recognizeScenarioWithAI(message string) (*storage.FSMScenario, err
 	// Prepare scenario descriptions for AI
 	var scenarioDescriptions []string
 	for _, scenario := range scenarios {
-		scenarioDescriptions = append(scenarioDescriptions, fmt.Sprintf("%s: %s", scenario.Name, scenario.Description))
+		keywords := strings.Join(scenario.TriggerKeywords, ", ")
+		scenarioDescriptions = append(scenarioDescriptions, fmt.Sprintf("%s (%s): %s", scenario.Name, keywords, scenario.Description))
 	}
 
-	prompt := fmt.Sprintf(`Пользователь описал проблему: "%s"
+	prompt := fmt.Sprintf(`Пользователь описал проблему с электроинструментом: "%s"
 
-Доступные сценарии диагностики:
+Тебе доступны следующие сценарии диагностики. Выбери ОДИН наиболее подходящий сценарий из списка ниже:
+
 %s
 
-Определи, какой сценарий лучше всего подходит для этой проблемы. Верни только название сценария в формате JSON: {"scenario": "scenario_name"} или {"scenario": null} если ни один не подходит.`, message, strings.Join(scenarioDescriptions, "\n"))
+Если проблема не подходит ни под один сценарий, верни {"scenario": null}
+
+Если подходит, верни ТОЛЬКО название сценария в формате JSON: {"scenario": "scenario_name"}`, message, strings.Join(scenarioDescriptions, "\n"))
 
 	requestBody := map[string]interface{}{
 		"model": f.openAIModel,
