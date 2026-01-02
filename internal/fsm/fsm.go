@@ -1,8 +1,15 @@
 package fsm
 
 import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
 	"regexp"
 	"strings"
+
+	"github.com/ZorinIvanA/tgbot-electro-tools/internal/storage"
 )
 
 // State represents FSM state
@@ -19,68 +26,243 @@ const (
 
 // FSM represents the finite state machine
 type FSM struct {
-	currentState State
+	storage       storage.Storage
+	openAIEnabled bool
+	openAIURL     string
+	openAIKey     string
+	openAIModel   string
 }
 
 // NewFSM creates a new FSM instance
-func NewFSM(initialState string) *FSM {
-	if initialState == "" {
-		initialState = string(StateIdle)
-	}
+func NewFSM(storage storage.Storage, openAIEnabled bool, openAIURL, openAIKey, openAIModel string) *FSM {
 	return &FSM{
-		currentState: State(initialState),
+		storage:       storage,
+		openAIEnabled: openAIEnabled,
+		openAIURL:     openAIURL,
+		openAIKey:     openAIKey,
+		openAIModel:   openAIModel,
 	}
 }
 
-// GetState returns current state
-func (f *FSM) GetState() State {
-	return f.currentState
+// ProcessMessage processes incoming message and returns response and whether it was handled
+func (f *FSM) ProcessMessage(userID int64, message string) (response string, handled bool, err error) {
+	// Get user's current session
+	session, err := f.storage.GetUserSession(userID)
+	if err != nil {
+		return "", false, fmt.Errorf("failed to get user session: %w", err)
+	}
+
+	// If no active session, check for triggers or use AI if enabled
+	if session == nil || session.ScenarioID == nil {
+		if f.openAIEnabled {
+			// Try to use AI for question recognition
+			scenario, err := f.recognizeScenarioWithAI(message)
+			if err != nil {
+				// Log error but continue with keyword matching
+				fmt.Printf("AI recognition failed: %v\n", err)
+			} else if scenario != nil {
+				// Start scenario
+				step, err := f.getFirstStep(scenario.ID)
+				if err != nil {
+					return "", false, fmt.Errorf("failed to get first step: %w", err)
+				}
+				if step != nil {
+					err = f.storage.UpdateUserSession(userID, &scenario.ID, &step.StepKey)
+					if err != nil {
+						return "", false, fmt.Errorf("failed to update session: %w", err)
+					}
+					return step.Message, true, nil
+				}
+			}
+		}
+
+		// Fallback to keyword matching
+		scenario, err := f.storage.GetFSMScenarioByTrigger(message)
+		if err != nil {
+			return "", false, fmt.Errorf("failed to check triggers: %w", err)
+		}
+		if scenario != nil {
+			step, err := f.getFirstStep(scenario.ID)
+			if err != nil {
+				return "", false, fmt.Errorf("failed to get first step: %w", err)
+			}
+			if step != nil {
+				err = f.storage.UpdateUserSession(userID, &scenario.ID, &step.StepKey)
+				if err != nil {
+					return "", false, fmt.Errorf("failed to update session: %w", err)
+				}
+				return step.Message, true, nil
+			}
+		}
+
+		// No scenario triggered
+		return "", false, nil
+	}
+
+	// Continue existing scenario
+	step, err := f.storage.GetFSMScenarioStep(*session.ScenarioID, *session.CurrentStepKey)
+	if err != nil {
+		return "", false, fmt.Errorf("failed to get current step: %w", err)
+	}
+	if step == nil {
+		// Invalid step, clear session
+		f.storage.DeleteUserSession(userID)
+		return "", false, nil
+	}
+
+	// If this is a final step, clear session and return response
+	if step.IsFinal {
+		f.storage.DeleteUserSession(userID)
+		return step.Message, true, nil
+	}
+
+	// Move to next step
+	if step.NextStepKey == nil {
+		// No next step, clear session
+		f.storage.DeleteUserSession(userID)
+		return step.Message, true, nil
+	}
+
+	nextStep, err := f.storage.GetFSMScenarioStep(*session.ScenarioID, *step.NextStepKey)
+	if err != nil {
+		return "", false, fmt.Errorf("failed to get next step: %w", err)
+	}
+	if nextStep == nil {
+		// Invalid next step, clear session
+		f.storage.DeleteUserSession(userID)
+		return step.Message, true, nil
+	}
+
+	// Update session with next step
+	err = f.storage.UpdateUserSession(userID, session.ScenarioID, &nextStep.StepKey)
+	if err != nil {
+		return "", false, fmt.Errorf("failed to update session: %w", err)
+	}
+
+	return nextStep.Message, true, nil
 }
 
-// SetState sets the current state
-func (f *FSM) SetState(state State) {
-	f.currentState = state
-}
+// recognizeScenarioWithAI uses OpenAI-compatible API to recognize the scenario
+func (f *FSM) recognizeScenarioWithAI(message string) (*storage.FSMScenario, error) {
+	if !f.openAIEnabled || f.openAIKey == "" {
+		return nil, nil
+	}
 
-// ProcessMessage processes incoming message and returns response and new state
-func (f *FSM) ProcessMessage(message string) (response string, newState State, handled bool) {
-	messageLower := strings.ToLower(strings.TrimSpace(message))
+	// Get all scenarios
+	scenarios, err := f.storage.GetFSMScenarios()
+	if err != nil {
+		return nil, err
+	}
 
-	// Check for diagnostic triggers when in idle state
-	if f.currentState == StateIdle {
-		if containsUSHMTrigger(messageLower) {
-			return GetUSHMStep1Response(), StateUSHMNotStartingStep1, true
+	if len(scenarios) == 0 {
+		return nil, nil
+	}
+
+	// Prepare scenario descriptions for AI
+	var scenarioDescriptions []string
+	for _, scenario := range scenarios {
+		scenarioDescriptions = append(scenarioDescriptions, fmt.Sprintf("%s: %s", scenario.Name, scenario.Description))
+	}
+
+	prompt := fmt.Sprintf(`Пользователь описал проблему: "%s"
+
+Доступные сценарии диагностики:
+%s
+
+Определи, какой сценарий лучше всего подходит для этой проблемы. Верни только название сценария в формате JSON: {"scenario": "scenario_name"} или {"scenario": null} если ни один не подходит.`, message, strings.Join(scenarioDescriptions, "\n"))
+
+	requestBody := map[string]interface{}{
+		"model": f.openAIModel,
+		"messages": []map[string]string{
+			{"role": "user", "content": prompt},
+		},
+		"max_tokens": 100,
+	}
+
+	jsonData, err := json.Marshal(requestBody)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", f.openAIURL+"/chat/completions", bytes.NewBuffer(jsonData))
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+f.openAIKey)
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("API request failed with status %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	var apiResponse struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+
+	err = json.Unmarshal(body, &apiResponse)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(apiResponse.Choices) == 0 {
+		return nil, nil
+	}
+
+	content := strings.TrimSpace(apiResponse.Choices[0].Message.Content)
+
+	var result struct {
+		Scenario *string `json:"scenario"`
+	}
+
+	err = json.Unmarshal([]byte(content), &result)
+	if err != nil {
+		return nil, err
+	}
+
+	if result.Scenario == nil {
+		return nil, nil
+	}
+
+	// Find matching scenario
+	for _, scenario := range scenarios {
+		if scenario.Name == *result.Scenario {
+			return scenario, nil
 		}
 	}
 
-	// Handle FSM states
-	switch f.currentState {
-	case StateUSHMNotStartingStep1:
-		return GetUSHMStep2Response(), StateUSHMNotStartingStep2, true
+	return nil, nil
+}
 
-	case StateUSHMNotStartingStep2:
-		// After step 2, return to idle
-		response := GetUSHMFinalResponse()
-		return response, StateIdle, true
-
-	case StateAwaitingEmail:
-		// Validate email
-		if IsValidEmail(message) {
-			return "Спасибо! Разрешаете ли вы получать технические рекомендации и инструкции по эксплуатации на этот email? Это не реклама.", StateAwaitingEmailConsent, true
-		}
-		return "Пожалуйста, введите корректный email адрес.", StateAwaitingEmail, true
-
-	case StateOfferingSiteLink:
-		// This state is handled by bot logic with buttons
-		return "", StateOfferingSiteLink, false
-
-	case StateAwaitingEmailConsent:
-		// This state is handled by bot logic with buttons
-		return "", StateAwaitingEmailConsent, false
-
-	default:
-		return "", f.currentState, false
+// getFirstStep returns the first step of a scenario
+func (f *FSM) getFirstStep(scenarioID int) (*storage.FSMScenarioStep, error) {
+	steps, err := f.storage.GetFSMScenarioSteps(scenarioID)
+	if err != nil {
+		return nil, err
 	}
+
+	if len(steps) == 0 {
+		return nil, nil
+	}
+
+	// Return the first step (assuming steps are ordered by ID)
+	return steps[0], nil
 }
 
 // containsUSHMTrigger checks if message contains УШМ problem triggers

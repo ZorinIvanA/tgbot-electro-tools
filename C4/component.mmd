@@ -1,0 +1,26 @@
+C4Component
+    title Компонентная диаграмма (Уровень 3): Модули Go-приложения
+
+    Container(GoПриложение, "Go Backend", "Go 1.25", "Основное приложение бота")
+
+    Component(BotHandler, "BotHandler", "Модуль обработки сообщений", "Принимает обновления от Telegram, маршрутизирует команды и текст")
+    Component(FSMEngine, "FSMEngine", "Движок конечных автоматов", "Управляет состоянием диалога (сессиями), сценариями техподдержки")
+    Component(NLUService, "NLUService", "Сервис NLU", "Анализирует текст пользователя, извлекает намерение (intent) и сущности (entities)")
+    Component(MetricsExporter, "MetricsExporter", "Экспортёр метрик", "Собирает метрики приложения, предоставляет эндпоинт для Prometheus")
+    Component(SettingsAPI, "SettingsAPI", "API настроек", "REST API для управления настройками бота (динамическими сценариями, конфигурацией)")
+    Component(DBClient, "DBClient", "Клиент БД", "Абстракция для работы с PostgreSQL (репозитории)")
+
+    Rel(GoПриложение, "Telegram API", "Получает обновления (long polling)", "HTTPS")
+    Rel(GoПриложение, "Bothub API", "Запрос NLU (опционально)", "HTTPS")
+
+    Rel(BotHandler, FSMEngine, "Запрашивает/обновляет состояние сессии", "Внутренний вызов")
+    Rel(BotHandler, NLUService, "Передаёт текст для анализа", "Внутренний вызов")
+    Rel(BotHandler, DBClient, "Сохраняет/загружает данные пользователя", "Внутренний вызов")
+    Rel(FSMEngine, DBClient, "Сохраняет/загружает состояние FSM", "Внутренний вызов")
+    Rel(NLUService, "Bothub API", "Вызывает внешний API", "HTTPS (опционально)")
+
+    Rel(SettingsAPI, DBClient, "Читает/обновляет настройки", "Внутренний вызов")
+    Rel(MetricsExporter, "*", "Собирает метрики из других компонентов", "Внутренний вызов")
+
+    Rel_Neighbor(MetricsExporter, "GoПриложение", "Предоставляет эндпоинт /api/v1/metrics", "HTTP")
+    Rel_Neighbor(SettingsAPI, "GoПриложение", "Предоставляет эндпоинт /api/v1/settings (с токеном)", "HTTP")

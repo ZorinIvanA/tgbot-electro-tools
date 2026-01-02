@@ -15,11 +15,12 @@ import (
 type Bot struct {
 	api             *tgbotapi.BotAPI
 	storage         storage.Storage
+	fsm             *fsm.FSM
 	rateLimitPerMin int
 }
 
 // NewBot creates a new bot instance
-func NewBot(token string, storage storage.Storage, rateLimitPerMin int) (*Bot, error) {
+func NewBot(token string, storage storage.Storage, rateLimitPerMin int, openAIEnabled bool, openAIURL, openAIKey, openAIModel string) (*Bot, error) {
 	api, err := tgbotapi.NewBotAPI(token)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create bot API: %w", err)
@@ -27,9 +28,13 @@ func NewBot(token string, storage storage.Storage, rateLimitPerMin int) (*Bot, e
 
 	log.Printf("Authorized on account %s", api.Self.UserName)
 
+	// Initialize FSM
+	fsmInstance := fsm.NewFSM(storage, openAIEnabled, openAIURL, openAIKey, openAIModel)
+
 	return &Bot{
 		api:             api,
 		storage:         storage,
+		fsm:             fsmInstance,
 		rateLimitPerMin: rateLimitPerMin,
 	}, nil
 }
@@ -111,14 +116,11 @@ func (b *Bot) handleMessage(message *tgbotapi.Message) {
 	}
 
 	// Process message through FSM
-	stateMachine := fsm.NewFSM(user.FSMState)
-	response, newState, handled := stateMachine.ProcessMessage(message.Text)
-
-	// Update FSM state if changed
-	if newState != stateMachine.GetState() {
-		if err := b.storage.UpdateUserFSMState(message.From.ID, string(newState)); err != nil {
-			log.Printf("Error updating FSM state: %v", err)
-		}
+	// Note: FSM now handles its own state management via database
+	response, handled, err := b.fsm.ProcessMessage(message.From.ID, message.Text)
+	if err != nil {
+		log.Printf("Error processing message through FSM: %v", err)
+		return
 	}
 
 	// Send response if handled by FSM
@@ -134,8 +136,8 @@ func (b *Bot) handleMessage(message *tgbotapi.Message) {
 		if err := b.storage.LogMessage(message.From.ID, sentMsg.Text, "outgoing"); err != nil {
 			log.Printf("Error logging outgoing message: %v", err)
 		}
-	} else if !handled && user.FSMState == string(fsm.StateIdle) {
-		// If not handled and in idle state, send generic response
+	} else if !handled {
+		// If not handled, send generic response
 		genericResponse := "Я вас понял. Если возникнут проблемы с электроинструментом, опишите их подробнее, и я постараюсь помочь!"
 		msg := tgbotapi.NewMessage(message.Chat.ID, genericResponse)
 		sentMsg, err := b.api.Send(msg)

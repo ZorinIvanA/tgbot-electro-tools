@@ -54,3 +54,46 @@ CREATE TABLE IF NOT EXISTS rate_limits (
     message_timestamps BIGINT[], -- Array of Unix timestamps
     updated_at TIMESTAMP DEFAULT NOW()
 );
+
+-- Сценарии (например: "ушм_не_включается")
+CREATE TABLE fsm_scenarios (
+    id SERIAL PRIMARY KEY,
+    name TEXT UNIQUE NOT NULL,          -- "ushm_not_starting"
+    trigger_keywords TEXT[] NOT NULL,   -- ["не включается", "молчит"]
+    description TEXT                     -- для админки
+);
+
+-- Шаги сценария
+CREATE TABLE fsm_steps (
+    id SERIAL PRIMARY KEY,
+    scenario_id INT REFERENCES fsm_scenarios(id) ON DELETE CASCADE,
+    step_key TEXT NOT NULL,             -- "step1", "step2"
+    message TEXT NOT NULL,              -- текст ответа бота
+    is_final BOOL DEFAULT false,
+    next_step_key TEXT,                 -- NULL = завершение
+    UNIQUE(scenario_id, step_key)
+);
+
+-- Сессии пользователей
+CREATE TABLE user_sessions (
+    user_id BIGINT PRIMARY KEY,
+    current_scenario_id INT REFERENCES fsm_scenarios(id),
+    current_step_key TEXT,
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Вставка сценариев диагностики
+INSERT INTO fsm_scenarios (name, trigger_keywords, description) VALUES
+('ushm_not_starting', ARRAY['не включается', 'не запускается', 'молчит', 'не жужжит', 'не крутит'], 'Диагностика проблемы запуска угловой шлифовальной машины');
+
+-- Вставка шагов для сценария "ushm_not_starting"
+INSERT INTO fsm_steps (scenario_id, step_key, message, is_final, next_step_key) VALUES
+(1, 'step1', 'Понял, проблема с запуском. Что именно происходит? Опишите, пожалуйста, подробнее: устройство совсем не реагирует на нажатие кнопки, или есть какие-то звуки, индикация?', false, 'step2'),
+(1, 'step2', 'Давайте попробуем продиагностировать проблему:
+
+1. Проверьте, нажимаете ли вы рычажок предохранителя (обычно находится на корпусе)
+2. Убедитесь, что розетка работает (проверьте другим устройством)
+3. Осмотрите кабель на наличие повреждений
+4. Если есть кнопка блокировки шпинделя - убедитесь, что она не зажата
+
+Проверьте эти моменты и напишите результат.', true, NULL);

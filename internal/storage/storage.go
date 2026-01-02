@@ -3,6 +3,7 @@ package storage
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "github.com/lib/pq"
@@ -32,6 +33,16 @@ type Storage interface {
 	// Rate limiting
 	CheckRateLimit(telegramID int64, maxPerMinute int) (bool, error)
 
+	// FSM operations
+	GetFSMScenarios() ([]*FSMScenario, error)
+	GetFSMScenarioByTrigger(message string) (*FSMScenario, error)
+	GetFSMScenario(id int) (*FSMScenario, error)
+	GetFSMScenarioSteps(scenarioID int) ([]*FSMScenarioStep, error)
+	GetFSMScenarioStep(scenarioID int, stepKey string) (*FSMScenarioStep, error)
+	GetUserSession(userID int64) (*UserSession, error)
+	UpdateUserSession(userID int64, scenarioID *int, stepKey *string) error
+	DeleteUserSession(userID int64) error
+
 	// Close database connection
 	Close() error
 }
@@ -54,6 +65,32 @@ type Settings struct {
 	TriggerMessageCount int
 	SiteURL             string
 	UpdatedAt           time.Time
+}
+
+// FSMScenario represents a scenario in the FSM
+type FSMScenario struct {
+	ID              int
+	Name            string
+	TriggerKeywords []string
+	Description     string
+}
+
+// FSMScenarioStep represents a step in an FSM scenario
+type FSMScenarioStep struct {
+	ID          int
+	ScenarioID  int
+	StepKey     string
+	Message     string
+	IsFinal     bool
+	NextStepKey *string
+}
+
+// UserSession represents a user's current FSM session
+type UserSession struct {
+	UserID         int64
+	ScenarioID     *int
+	CurrentStepKey *string
+	UpdatedAt      time.Time
 }
 
 // PostgresStorage implements Storage interface for PostgreSQL
@@ -328,6 +365,184 @@ func (s *PostgresStorage) CheckRateLimit(telegramID int64, maxPerMinute int) (bo
 	}
 
 	return true, nil
+}
+
+// GetFSMScenarios returns all FSM scenarios
+func (s *PostgresStorage) GetFSMScenarios() ([]*FSMScenario, error) {
+	query := `SELECT id, name, trigger_keywords, description FROM fsm_scenarios`
+
+	rows, err := s.db.Query(query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get FSM scenarios: %w", err)
+	}
+	defer rows.Close()
+
+	var scenarios []*FSMScenario
+	for rows.Next() {
+		scenario := &FSMScenario{}
+		var keywords []string
+		if err := rows.Scan(&scenario.ID, &scenario.Name, &keywords, &scenario.Description); err != nil {
+			return nil, fmt.Errorf("failed to scan FSM scenario: %w", err)
+		}
+		scenario.TriggerKeywords = keywords
+		scenarios = append(scenarios, scenario)
+	}
+
+	return scenarios, nil
+}
+
+// GetFSMScenarioByTrigger finds a scenario that matches the trigger message
+func (s *PostgresStorage) GetFSMScenarioByTrigger(message string) (*FSMScenario, error) {
+	scenarios, err := s.GetFSMScenarios()
+	if err != nil {
+		return nil, err
+	}
+
+	messageLower := strings.ToLower(strings.TrimSpace(message))
+
+	for _, scenario := range scenarios {
+		for _, keyword := range scenario.TriggerKeywords {
+			if strings.Contains(messageLower, strings.ToLower(keyword)) {
+				return scenario, nil
+			}
+		}
+	}
+
+	return nil, nil
+}
+
+// GetFSMScenario returns a specific scenario by ID
+func (s *PostgresStorage) GetFSMScenario(id int) (*FSMScenario, error) {
+	query := `SELECT id, name, trigger_keywords, description FROM fsm_scenarios WHERE id = $1`
+
+	scenario := &FSMScenario{}
+	var keywords []string
+	err := s.db.QueryRow(query, id).Scan(&scenario.ID, &scenario.Name, &keywords, &scenario.Description)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get FSM scenario: %w", err)
+	}
+
+	scenario.TriggerKeywords = keywords
+	return scenario, nil
+}
+
+// GetFSMScenarioSteps returns all steps for a scenario
+func (s *PostgresStorage) GetFSMScenarioSteps(scenarioID int) ([]*FSMScenarioStep, error) {
+	query := `SELECT id, scenario_id, step_key, message, is_final, next_step_key FROM fsm_steps WHERE scenario_id = $1 ORDER BY id`
+
+	rows, err := s.db.Query(query, scenarioID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get FSM scenario steps: %w", err)
+	}
+	defer rows.Close()
+
+	var steps []*FSMScenarioStep
+	for rows.Next() {
+		step := &FSMScenarioStep{}
+		var nextStepKey sql.NullString
+		if err := rows.Scan(&step.ID, &step.ScenarioID, &step.StepKey, &step.Message, &step.IsFinal, &nextStepKey); err != nil {
+			return nil, fmt.Errorf("failed to scan FSM scenario step: %w", err)
+		}
+		if nextStepKey.Valid {
+			step.NextStepKey = &nextStepKey.String
+		}
+		steps = append(steps, step)
+	}
+
+	return steps, nil
+}
+
+// GetFSMScenarioStep returns a specific step
+func (s *PostgresStorage) GetFSMScenarioStep(scenarioID int, stepKey string) (*FSMScenarioStep, error) {
+	query := `SELECT id, scenario_id, step_key, message, is_final, next_step_key FROM fsm_steps WHERE scenario_id = $1 AND step_key = $2`
+
+	step := &FSMScenarioStep{}
+	var nextStepKey sql.NullString
+	err := s.db.QueryRow(query, scenarioID, stepKey).Scan(&step.ID, &step.ScenarioID, &step.StepKey, &step.Message, &step.IsFinal, &nextStepKey)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get FSM scenario step: %w", err)
+	}
+
+	if nextStepKey.Valid {
+		step.NextStepKey = &nextStepKey.String
+	}
+	return step, nil
+}
+
+// GetUserSession returns user's current FSM session
+func (s *PostgresStorage) GetUserSession(userID int64) (*UserSession, error) {
+	query := `SELECT user_id, current_scenario_id, current_step_key, updated_at FROM user_sessions WHERE user_id = $1`
+
+	session := &UserSession{}
+	var scenarioID sql.NullInt64
+	var stepKey sql.NullString
+	err := s.db.QueryRow(query, userID).Scan(&session.UserID, &scenarioID, &stepKey, &session.UpdatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get user session: %w", err)
+	}
+
+	if scenarioID.Valid {
+		id := int(scenarioID.Int64)
+		session.ScenarioID = &id
+	}
+	if stepKey.Valid {
+		session.CurrentStepKey = &stepKey.String
+	}
+
+	return session, nil
+}
+
+// UpdateUserSession updates or creates a user session
+func (s *PostgresStorage) UpdateUserSession(userID int64, scenarioID *int, stepKey *string) error {
+	if scenarioID == nil && stepKey == nil {
+		return s.DeleteUserSession(userID)
+	}
+
+	query := `
+		INSERT INTO user_sessions (user_id, current_scenario_id, current_step_key, updated_at)
+		VALUES ($1, $2, $3, NOW())
+		ON CONFLICT (user_id)
+		DO UPDATE SET current_scenario_id = $2, current_step_key = $3, updated_at = NOW()
+	`
+
+	var sid interface{}
+	var skey interface{}
+	if scenarioID != nil {
+		sid = *scenarioID
+	} else {
+		sid = nil
+	}
+	if stepKey != nil {
+		skey = *stepKey
+	} else {
+		skey = nil
+	}
+
+	_, err := s.db.Exec(query, userID, sid, skey)
+	if err != nil {
+		return fmt.Errorf("failed to update user session: %w", err)
+	}
+
+	return nil
+}
+
+// DeleteUserSession deletes a user session
+func (s *PostgresStorage) DeleteUserSession(userID int64) error {
+	query := `DELETE FROM user_sessions WHERE user_id = $1`
+	_, err := s.db.Exec(query, userID)
+	if err != nil {
+		return fmt.Errorf("failed to delete user session: %w", err)
+	}
+	return nil
 }
 
 // Close closes the database connection

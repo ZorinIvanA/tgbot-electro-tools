@@ -49,7 +49,7 @@ func main() {
 
 	// Initialize bot
 	log.Println("Initializing Telegram bot...")
-	telegramBot, err := bot.NewBot(config.TelegramBotToken, db, config.RateLimitPerMinute)
+	telegramBot, err := bot.NewBot(config.TelegramBotToken, db, config.RateLimitPerMinute, config.OpenAIEnabled, config.OpenAIAPIURL, config.OpenAIAPIKey, config.OpenAIModel)
 	if err != nil {
 		log.Fatalf("Failed to create bot: %v", err)
 	}
@@ -96,6 +96,10 @@ type Config struct {
 	HTTPPort           string
 	AdminAPIToken      string
 	RateLimitPerMinute int
+	OpenAIEnabled      bool
+	OpenAIAPIURL       string
+	OpenAIAPIKey       string
+	OpenAIModel        string
 }
 
 // loadConfig loads configuration from environment variables
@@ -106,6 +110,9 @@ func loadConfig() *Config {
 		log.Printf("Warning: invalid RATE_LIMIT_PER_MINUTE value, using default: 10")
 		rateLimit = 10
 	}
+
+	openAIEnabledStr := getEnv("OPENAI_API_ENABLED", "false")
+	openAIEnabled := openAIEnabledStr == "true"
 
 	return &Config{
 		TelegramBotToken:   getEnv("TELEGRAM_BOT_TOKEN", ""),
@@ -118,6 +125,10 @@ func loadConfig() *Config {
 		HTTPPort:           getEnv("HTTP_PORT", "8080"),
 		AdminAPIToken:      getEnv("ADMIN_API_TOKEN", ""),
 		RateLimitPerMinute: rateLimit,
+		OpenAIEnabled:      openAIEnabled,
+		OpenAIAPIURL:       getEnv("OPENAI_API_URL", "https://bothub.ru/v1"),
+		OpenAIAPIKey:       getEnv("OPENAI_API_KEY", ""),
+		OpenAIModel:        getEnv("OPENAI_MODEL", "gpt-3.5-turbo"),
 	}
 }
 
