@@ -9,6 +9,7 @@ import (
 
 	"github.com/ZorinIvanA/tgbot-electro-tools/internal/metrics"
 	"github.com/ZorinIvanA/tgbot-electro-tools/internal/storage"
+	httpSwagger "github.com/swaggo/http-swagger"
 )
 
 // Server represents HTTP API server
@@ -17,15 +18,17 @@ type Server struct {
 	metricsCollector *metrics.Collector
 	adminToken       string
 	port             string
+	debugMode        bool
 }
 
 // NewServer creates a new HTTP API server
-func NewServer(storage storage.Storage, metricsCollector *metrics.Collector, adminToken, port string) *Server {
+func NewServer(storage storage.Storage, metricsCollector *metrics.Collector, adminToken, port string, debugMode bool) *Server {
 	return &Server{
 		storage:          storage,
 		metricsCollector: metricsCollector,
 		adminToken:       adminToken,
 		port:             port,
+		debugMode:        debugMode,
 	}
 }
 
@@ -38,6 +41,10 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/v1/settings", s.handleSettings)
 	mux.HandleFunc("/health", s.handleHealth)
 
+	if s.debugMode {
+		mux.HandleFunc("/swagger/", httpSwagger.WrapHandler)
+	}
+
 	addr := ":" + s.port
 	log.Printf("Starting HTTP API server on %s", addr)
 
@@ -45,6 +52,12 @@ func (s *Server) Start() error {
 }
 
 // handleMetrics returns Prometheus-format metrics
+// @Summary Get metrics
+// @Description Get application metrics in Prometheus format
+// @Tags metrics
+// @Produce text/plain
+// @Success 200 {string} string "Metrics data"
+// @Router /api/v1/metrics [get]
 func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -64,6 +77,23 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleSettings handles GET and PUT requests for settings
+// @Summary Get settings
+// @Description Get current bot settings
+// @Tags settings
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} GetSettingsResponse
+// @Router /api/v1/settings [get]
+// @Summary Update settings
+// @Description Update bot settings
+// @Tags settings
+// @Accept json
+// @Produce json
+// @Param settings body UpdateSettingsRequest true "Settings to update"
+// @Security BearerAuth
+// @Success 200 {object} GetSettingsResponse
+// @Failure 400 {string} string "Bad request"
+// @Router /api/v1/settings [put]
 func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 	// Check authentication
 	if !s.authenticate(r) {
@@ -147,6 +177,12 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleHealth returns health status
+// @Summary Health check
+// @Description Check if the service is healthy
+// @Tags health
+// @Produce json
+// @Success 200 {object} map[string]string
+// @Router /health [get]
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)

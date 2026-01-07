@@ -1,0 +1,123 @@
+basePath: /
+definitions:
+  api.GetSettingsResponse:
+    properties:
+      site_url:
+        type: string
+      trigger_message_count:
+        type: integer
+    type: object
+  api.UpdateSettingsRequest:
+    properties:
+      site_url:
+        type: string
+      trigger_message_count:
+        type: integer
+    type: object
+host: localhost:54321
+info:
+  contact: {}
+  description: API for managing Telegram Bot Electro Tools settings and metrics
+  title: Telegram Bot Electro Tools API
+  version: "1.0"
+paths:
+  /api/v1/metrics:
+    get:
+      description: Get application metrics in Prometheus format
+      produces:
+      - text/plain
+      responses:
+        "200":
+          description: Metrics data
+          schema:
+            type: string
+      summary: Get metrics
+      tags:
+      - metrics
+  /api/v1/settings:
+    get:
+      consumes:
+      - application/json
+      description: |-
+        Get current bot settings
+        Update bot settings
+      parameters:
+      - description: Settings to update
+        in: body
+        name: settings
+        required: true
+        schema:
+          $ref: '#/definitions/api.UpdateSettingsRequest'
+      produces:
+      - application/json
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.GetSettingsResponse'
+        "400":
+          description: Bad request
+          schema:
+            type: string
+      security:
+      - BearerAuth: []
+      - BearerAuth: []
+      summary: Update settings
+      tags:
+      - settings
+      - settings
+    put:
+      consumes:
+      - application/json
+      description: |-
+        Get current bot settings
+        Update bot settings
+      parameters:
+      - description: Settings to update
+        in: body
+        name: settings
+        required: true
+        schema:
+          $ref: '#/definitions/api.UpdateSettingsRequest'
+      produces:
+      - application/json
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.GetSettingsResponse'
+        "400":
+          description: Bad request
+          schema:
+            type: string
+      security:
+      - BearerAuth: []
+      - BearerAuth: []
+      summary: Update settings
+      tags:
+      - settings
+      - settings
+  /health:
+    get:
+      description: Check if the service is healthy
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Health check
+      tags:
+      - health
+securityDefinitions:
+  BearerAuth:
+    description: 'Enter the token in the format: Bearer {token}'
+    in: header
+    name: Authorization
+    type: apiKey
+swagger: "2.0"

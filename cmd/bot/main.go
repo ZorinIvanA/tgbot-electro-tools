@@ -1,3 +1,14 @@
+// Package main Telegram Bot Electro Tools API
+//
+// @title Telegram Bot Electro Tools API
+// @version 1.0
+// @description API for managing Telegram Bot Electro Tools settings and metrics
+// @host localhost:54321
+// @BasePath /
+// @securityDefinitions.apikey BearerAuth
+// @in header
+// @name Authorization
+// @description Enter the token in the format: Bearer {token}
 package main
 
 import (
@@ -7,6 +18,7 @@ import (
 	"strconv"
 	"syscall"
 
+	_ "github.com/ZorinIvanA/tgbot-electro-tools/docs"
 	"github.com/ZorinIvanA/tgbot-electro-tools/internal/api"
 	"github.com/ZorinIvanA/tgbot-electro-tools/internal/bot"
 	"github.com/ZorinIvanA/tgbot-electro-tools/internal/metrics"
@@ -56,7 +68,7 @@ func main() {
 	log.Printf("Bot initialized: @%s", telegramBot.GetUsername())
 
 	// Initialize HTTP API server
-	apiServer := api.NewServer(db, metricsCollector, config.AdminAPIToken, config.HTTPPort)
+	apiServer := api.NewServer(db, metricsCollector, config.AdminAPIToken, config.HTTPPort, config.DebugMode)
 
 	// Start HTTP API server in a separate goroutine
 	go func() {
@@ -100,6 +112,7 @@ type Config struct {
 	OpenAIAPIURL       string
 	OpenAIAPIKey       string
 	OpenAIModel        string
+	DebugMode          bool
 }
 
 // loadConfig loads configuration from environment variables
@@ -113,6 +126,9 @@ func loadConfig() *Config {
 
 	openAIEnabledStr := getEnv("OPENAI_API_ENABLED", "false")
 	openAIEnabled := openAIEnabledStr == "true"
+
+	debugModeStr := getEnv("DEBUG_MODE", "false")
+	debugMode := debugModeStr == "true"
 
 	return &Config{
 		TelegramBotToken:   getEnv("TELEGRAM_BOT_TOKEN", ""),
@@ -129,6 +145,7 @@ func loadConfig() *Config {
 		OpenAIAPIURL:       getEnv("OPENAI_API_URL", "https://bothub.ru/v1"),
 		OpenAIAPIKey:       getEnv("OPENAI_API_KEY", ""),
 		OpenAIModel:        getEnv("OPENAI_MODEL", "gpt-3.5-turbo"),
+		DebugMode:          debugMode,
 	}
 }
 
