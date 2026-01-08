@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	_ "github.com/lib/pq"
+	"github.com/lib/pq"
 )
 
 // Storage represents database storage interface
@@ -313,34 +313,23 @@ func (s *PostgresStorage) CheckRateLimit(telegramID int64, maxPerMinute int) (bo
 	oneMinuteAgo := now - 60
 
 	// Get existing timestamps
-	var timestamps []int64
+	var timestamps pq.Int64Array
 	query := `SELECT message_timestamps FROM rate_limits WHERE telegram_id = $1`
 
-	var timestampsArray []byte
-	err := s.db.QueryRow(query, telegramID).Scan(&timestampsArray)
+	err := s.db.QueryRow(query, telegramID).Scan(&timestamps)
 	if err != nil && err != sql.ErrNoRows {
 		return false, fmt.Errorf("failed to get rate limit data: %w", err)
 	}
 
-	// Parse timestamps from PostgreSQL array
-	if err != sql.ErrNoRows && len(timestampsArray) > 0 {
-		// Simple parsing for bigint array
-		timestampQuery := `SELECT unnest(message_timestamps) FROM rate_limits WHERE telegram_id = $1`
-		rows, err := s.db.Query(timestampQuery, telegramID)
-		if err != nil {
-			return false, err
-		}
-		defer rows.Close()
-
-		for rows.Next() {
-			var ts int64
-			if err := rows.Scan(&ts); err != nil {
-				continue
-			}
+	// Filter timestamps to keep only recent ones
+	if err != sql.ErrNoRows {
+		var filtered pq.Int64Array
+		for _, ts := range timestamps {
 			if ts >= oneMinuteAgo {
-				timestamps = append(timestamps, ts)
+				filtered = append(filtered, ts)
 			}
 		}
+		timestamps = filtered
 	}
 
 	// Check if rate limit exceeded
