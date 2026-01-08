@@ -381,11 +381,11 @@ func (s *PostgresStorage) GetFSMScenarios() ([]*FSMScenario, error) {
 	var scenarios []*FSMScenario
 	for rows.Next() {
 		scenario := &FSMScenario{}
-		var keywords []string
+		var keywords pq.StringArray
 		if err := rows.Scan(&scenario.ID, &scenario.Name, &keywords, &scenario.Description); err != nil {
 			return nil, fmt.Errorf("failed to scan FSM scenario: %w", err)
 		}
-		scenario.TriggerKeywords = keywords
+		scenario.TriggerKeywords = []string(keywords)
 		scenarios = append(scenarios, scenario)
 	}
 
@@ -417,7 +417,7 @@ func (s *PostgresStorage) GetFSMScenario(id int) (*FSMScenario, error) {
 	query := `SELECT id, name, trigger_keywords, description FROM fsm_scenarios WHERE id = $1`
 
 	scenario := &FSMScenario{}
-	var keywords []string
+	var keywords pq.StringArray
 	err := s.db.QueryRow(query, id).Scan(&scenario.ID, &scenario.Name, &keywords, &scenario.Description)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -426,7 +426,7 @@ func (s *PostgresStorage) GetFSMScenario(id int) (*FSMScenario, error) {
 		return nil, fmt.Errorf("failed to get FSM scenario: %w", err)
 	}
 
-	scenario.TriggerKeywords = keywords
+	scenario.TriggerKeywords = []string(keywords)
 	return scenario, nil
 }
 
