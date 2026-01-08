@@ -4,10 +4,11 @@ meta:
   environment: docker
   toolchain:
     name: docker
+    version: latest
 build:
   dockerfile: ./Dockerfile
 run:
   persistenceMount: /data
   image: null
-  containerPort: 80
+  containerPort: 54444
 serviceType: compute
