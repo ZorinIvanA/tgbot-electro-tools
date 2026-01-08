@@ -132,13 +132,15 @@ func (s *PostgresStorage) GetOrCreateUser(telegramID int64) (*User, error) {
 		RETURNING id, telegram_id, message_count, fsm_state, email, consent_granted, created_at, updated_at
 	`
 
+	var nullEmail sql.NullString
+	var nullConsent sql.NullBool
 	err := s.db.QueryRow(query, telegramID).Scan(
 		&user.ID,
 		&user.TelegramID,
 		&user.MessageCount,
 		&user.FSMState,
-		&user.Email,
-		&user.ConsentGranted,
+		&nullEmail,
+		&nullConsent,
 		&user.CreatedAt,
 		&user.UpdatedAt,
 	)
@@ -151,6 +153,10 @@ func (s *PostgresStorage) GetOrCreateUser(telegramID int64) (*User, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to get or create user: %w", err)
 	}
+
+	// Handle nullable fields
+	user.Email = nullEmail.String
+	user.ConsentGranted = nullConsent.Bool
 
 	return user, nil
 }
@@ -194,13 +200,15 @@ func (s *PostgresStorage) GetUser(telegramID int64) (*User, error) {
 		WHERE telegram_id = $1
 	`
 
+	var nullEmail sql.NullString
+	var nullConsent sql.NullBool
 	err := s.db.QueryRow(query, telegramID).Scan(
 		&user.ID,
 		&user.TelegramID,
 		&user.MessageCount,
 		&user.FSMState,
-		&user.Email,
-		&user.ConsentGranted,
+		&nullEmail,
+		&nullConsent,
 		&user.CreatedAt,
 		&user.UpdatedAt,
 	)
@@ -211,6 +219,10 @@ func (s *PostgresStorage) GetUser(telegramID int64) (*User, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to get user: %w", err)
 	}
+
+	// Handle nullable fields
+	user.Email = nullEmail.String
+	user.ConsentGranted = nullConsent.Bool
 
 	return user, nil
 }
