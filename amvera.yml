@@ -3,10 +3,9 @@ version: null
 meta:
   environment: docker
   toolchain:
-    name: go
-    version: 1.25
+    name: docker
 build:
-  image: null
+  dockerfile: ./Dockerfile
 run:
   persistenceMount: /data
   image: null

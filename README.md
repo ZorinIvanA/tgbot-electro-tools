@@ -105,6 +105,9 @@ docker build -t telegram-electro-tools-bot .
 
 # Запуск с переменными окружения
 docker run -p 8080:8080 --env-file .env telegram-electro-tools-bot
+
+# То что запустилось
+sudo docker run --rm --network host   -e TELEGRAM_BOT_TOKEN='321'   -e ADMIN_API_TOKEN='123'   -e DB_HOST='127.0.0.1'   -e DB_PORT='5433'   -e DB_USER='user'   -e DB_PASSWORD='password'   -e DB_NAME='electro-tools'   -e DB_SSLMODE='disable'   e-tools
 ```
 
 ## ⚙️ Конфигурация
