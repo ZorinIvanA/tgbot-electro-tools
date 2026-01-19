@@ -71,6 +71,7 @@ type Settings struct {
 type FSMScenario struct {
 	ID              int
 	Name            string
+	DisplayName     string
 	TriggerKeywords []string
 	Description     string
 }
@@ -370,7 +371,7 @@ func (s *PostgresStorage) CheckRateLimit(telegramID int64, maxPerMinute int) (bo
 
 // GetFSMScenarios returns all FSM scenarios
 func (s *PostgresStorage) GetFSMScenarios() ([]*FSMScenario, error) {
-	query := `SELECT id, name, trigger_keywords, description FROM fsm_scenarios`
+	query := `SELECT id, name, display_name, trigger_keywords, description FROM fsm_scenarios`
 
 	rows, err := s.db.Query(query)
 	if err != nil {
@@ -382,10 +383,12 @@ func (s *PostgresStorage) GetFSMScenarios() ([]*FSMScenario, error) {
 	for rows.Next() {
 		scenario := &FSMScenario{}
 		var keywords pq.StringArray
-		if err := rows.Scan(&scenario.ID, &scenario.Name, &keywords, &scenario.Description); err != nil {
+		var displayName sql.NullString
+		if err := rows.Scan(&scenario.ID, &scenario.Name, &displayName, &keywords, &scenario.Description); err != nil {
 			return nil, fmt.Errorf("failed to scan FSM scenario: %w", err)
 		}
 		scenario.TriggerKeywords = []string(keywords)
+		scenario.DisplayName = displayName.String
 		scenarios = append(scenarios, scenario)
 	}
 
@@ -414,11 +417,12 @@ func (s *PostgresStorage) GetFSMScenarioByTrigger(message string) (*FSMScenario,
 
 // GetFSMScenario returns a specific scenario by ID
 func (s *PostgresStorage) GetFSMScenario(id int) (*FSMScenario, error) {
-	query := `SELECT id, name, trigger_keywords, description FROM fsm_scenarios WHERE id = $1`
+	query := `SELECT id, name, display_name, trigger_keywords, description FROM fsm_scenarios WHERE id = $1`
 
 	scenario := &FSMScenario{}
 	var keywords pq.StringArray
-	err := s.db.QueryRow(query, id).Scan(&scenario.ID, &scenario.Name, &keywords, &scenario.Description)
+	var displayName sql.NullString
+	err := s.db.QueryRow(query, id).Scan(&scenario.ID, &scenario.Name, &displayName, &keywords, &scenario.Description)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -427,6 +431,7 @@ func (s *PostgresStorage) GetFSMScenario(id int) (*FSMScenario, error) {
 	}
 
 	scenario.TriggerKeywords = []string(keywords)
+	scenario.DisplayName = displayName.String
 	return scenario, nil
 }
 

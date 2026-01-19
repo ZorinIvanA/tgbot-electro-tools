@@ -288,6 +288,11 @@ func (f *FSM) GenerateButtonsForStep(step *storage.FSMScenarioStep, scenarioID i
 		buttons = f.getNextStepButtons(scenarioID, step.StepKey)
 	}
 
+	// Special handling for action steps - generate buttons for terminal actions
+	if strings.HasSuffix(step.StepKey, "_action") {
+		buttons = f.generateActionButtons(scenarioID, step.StepKey)
+	}
+
 	return buttons
 }
 
@@ -334,6 +339,132 @@ func (f *FSM) getNextStepButtons(scenarioID int, currentStepKey string) []Button
 	}
 
 	return buttons
+}
+
+// generateActionButtons generates buttons for terminal actions based on the action step
+func (f *FSM) generateActionButtons(scenarioID int, stepKey string) []Button {
+	var buttons []Button
+	actionMap := f.getActionMapping(stepKey)
+
+	for _, actionKey := range actionMap {
+		step, err := f.storage.GetFSMScenarioStep(scenarioID, actionKey)
+		if err != nil {
+			continue
+		}
+		if step != nil {
+			// Extract first line as button text
+			firstLine := strings.Split(step.Message, "\n")[0]
+			if strings.HasPrefix(firstLine, "🔋") || strings.HasPrefix(firstLine, "🔘") ||
+			   strings.HasPrefix(firstLine, "🔌") || strings.HasPrefix(firstLine, "🏪") ||
+			   strings.HasPrefix(firstLine, "🔄") || strings.HasPrefix(firstLine, "❄️") ||
+			   strings.HasPrefix(firstLine, "⚙️") || strings.HasPrefix(firstLine, "🖊️") {
+				// Remove emoji and clean up text for button
+				text := strings.TrimSpace(strings.TrimPrefix(firstLine, strings.Split(firstLine, " ")[0]))
+				buttons = append(buttons, Button{
+					Text:         text,
+					CallbackData: fmt.Sprintf("action_%d_%s", scenarioID, actionKey),
+				})
+			}
+		}
+	}
+
+	return buttons
+}
+
+// getActionMapping returns terminal actions for a given action step
+func (f *FSM) getActionMapping(stepKey string) []string {
+	switch stepKey {
+	case "no_power_action":
+		return []string{
+			"charge_or_replace_battery",
+			"replace_trigger_button",
+			"repair_internal_wiring",
+			"refer_to_service_center",
+		}
+	case "stopped_action":
+		return []string{
+			"restart_after_protection_reset",
+			"restart_after_cooling",
+			"repair_mechanical_drive",
+			"replace_carbon_brushes",
+			"refer_to_service_center",
+		}
+	case "no_power_action_miter":
+		return []string{
+			"restore_power",
+			"replace_power_cable",
+			"disable_safety_lock",
+			"repair_mechanical_drive_miter",
+			"replace_belt",
+			"reinstall_blade",
+			"install_new_blade",
+			"refer_to_service_center",
+		}
+	case "motor_no_blade_action":
+		return []string{
+			"repair_mechanical_drive_miter",
+			"replace_belt",
+		}
+	case "vibration_action":
+		return []string{
+			"reinstall_blade",
+			"install_new_blade",
+			"repair_mechanical_drive_miter",
+		}
+	case "no_power_action_jigsaw":
+		return []string{
+			"restore_power",
+			"replace_trigger_button",
+			"repair_internal_wiring",
+		}
+	case "blade_not_moving_action":
+		return []string{
+			"correctly_install_blade",
+			"repair_reciprocating_mechanism",
+		}
+	case "vibration_drift_action":
+		return []string{
+			"install_new_blade",
+			"repair_mechanical_drive",
+			"tighten_housing",
+		}
+	case "no_power_action_drill":
+		return []string{
+			"charge_or_replace_battery",
+			"service_contact_group",
+			"replace_trigger_button",
+		}
+	case "spins_no_torque_action":
+		return []string{
+			"adjust_torque_setting",
+			"repair_gearbox",
+		}
+	case "battery_drains_action":
+		return []string{
+			"replace_battery_cells",
+			"refer_to_service_center",
+		}
+	case "no_power_action_lawnmower":
+		return []string{
+			"restore_power",
+			"replace_power_cable",
+			"restart_after_cooling",
+		}
+	case "motor_no_blade_action_lawnmower":
+		return []string{
+			"clear_working_area",
+			"replace_belt",
+			"repair_mechanical_drive",
+		}
+	case "uneven_cut_action":
+		return []string{
+			"sharpen_or_replace_blade",
+			"correctly_install_blade",
+			"adjust_cutting_height",
+		}
+	default:
+		return []string{}
+	}
 }
 
 // min returns minimum of two ints
@@ -441,8 +572,12 @@ func (f *FSM) GetScenariosButtons() ([]Button, error) {
 
 	var buttons []Button
 	for _, scenario := range scenarios {
+		displayName := scenario.Name
+		if scenario.DisplayName != "" {
+			displayName = scenario.DisplayName
+		}
 		buttons = append(buttons, Button{
-			Text:         scenario.Name,
+			Text:         displayName,
 			CallbackData: fmt.Sprintf("start_scenario_%d", scenario.ID),
 		})
 	}

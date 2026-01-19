@@ -268,6 +268,8 @@ func (b *Bot) handleCallbackQuery(query *tgbotapi.CallbackQuery) {
 			b.handleOption(query, user)
 		} else if strings.HasPrefix(query.Data, "goto_") {
 			b.handleGoto(query, user)
+		} else if strings.HasPrefix(query.Data, "action_") {
+			b.handleAction(query, user)
 		} else {
 			log.Printf("Unknown callback data: %s", query.Data)
 		}
@@ -572,6 +574,46 @@ func (b *Bot) createInlineKeyboard(buttons []fsm.Button) tgbotapi.InlineKeyboard
 	}
 
 	return tgbotapi.NewInlineKeyboardMarkup(rows...)
+}
+
+// handleAction handles action button clicks
+func (b *Bot) handleAction(query *tgbotapi.CallbackQuery, user *storage.User) {
+	parts := strings.Split(query.Data, "_")
+	if len(parts) >= 3 {
+		scenarioID, _ := strconv.Atoi(parts[1])
+		actionKey := parts[2]
+
+		step, err := b.storage.GetFSMScenarioStep(scenarioID, actionKey)
+		if err != nil {
+			log.Printf("Error getting action step: %v", err)
+			return
+		}
+		if step != nil {
+			err = b.storage.UpdateUserSession(user.TelegramID, &scenarioID, &step.StepKey)
+			if err != nil {
+				log.Printf("Error updating session: %v", err)
+				return
+			}
+
+			buttons := b.fsm.GenerateButtonsForStep(step, scenarioID)
+			msg := tgbotapi.NewMessage(query.Message.Chat.ID, step.Message)
+			if len(buttons) > 0 {
+				keyboard := b.createInlineKeyboard(buttons)
+				msg.ReplyMarkup = keyboard
+			}
+
+			sentMsg, err := b.api.Send(msg)
+			if err != nil {
+				log.Printf("Error sending action response: %v", err)
+				return
+			}
+
+			// Log outgoing message
+			if err := b.storage.LogMessage(user.TelegramID, sentMsg.Text, "outgoing"); err != nil {
+				log.Printf("Error logging outgoing message: %v", err)
+			}
+		}
+	}
 }
 
 // GetUserIDFromString converts string to user ID
