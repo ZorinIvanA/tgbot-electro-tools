@@ -117,7 +117,7 @@ func (b *Bot) handleMessage(message *tgbotapi.Message) {
 
 	// Process message through FSM
 	// Note: FSM now handles its own state management via database
-	response, handled, err := b.fsm.ProcessMessage(message.From.ID, message.Text)
+	response, buttons, handled, err := b.fsm.ProcessMessage(message.From.ID, message.Text)
 	if err != nil {
 		log.Printf("Error processing message through FSM: %v", err)
 		return
@@ -126,6 +126,13 @@ func (b *Bot) handleMessage(message *tgbotapi.Message) {
 	// Send response if handled by FSM
 	if handled && response != "" {
 		msg := tgbotapi.NewMessage(message.Chat.ID, response)
+
+		// Add inline keyboard if buttons are provided
+		if len(buttons) > 0 {
+			keyboard := b.createInlineKeyboard(buttons)
+			msg.ReplyMarkup = keyboard
+		}
+
 		sentMsg, err := b.api.Send(msg)
 		if err != nil {
 			log.Printf("Error sending message: %v", err)
@@ -160,7 +167,22 @@ func (b *Bot) handleStartCommand(chatID int64, user *storage.User) {
 		log.Printf("Error resetting FSM state: %v", err)
 	}
 
+	// Clear user session
+	if err := b.storage.DeleteUserSession(user.TelegramID); err != nil {
+		log.Printf("Error clearing user session: %v", err)
+	}
+
 	msg := tgbotapi.NewMessage(chatID, fsm.GetStartMessage())
+
+	// Get scenarios buttons
+	scenariosButtons, err := b.fsm.GetScenariosButtons()
+	if err != nil {
+		log.Printf("Error getting scenarios buttons: %v", err)
+	} else if len(scenariosButtons) > 0 {
+		keyboard := b.createInlineKeyboard(scenariosButtons)
+		msg.ReplyMarkup = keyboard
+	}
+
 	sentMsg, err := b.api.Send(msg)
 	if err != nil {
 		log.Printf("Error sending start message: %v", err)
@@ -230,81 +252,195 @@ func (b *Bot) handleCallbackQuery(query *tgbotapi.CallbackQuery) {
 
 	switch query.Data {
 	case "site_link_yes":
-		// User wants to visit site, request email
-		if err := b.storage.UpdateUserFSMState(user.TelegramID, string(fsm.StateAwaitingEmail)); err != nil {
-			log.Printf("Error updating FSM state: %v", err)
-		}
-
-		msg := tgbotapi.NewMessage(query.Message.Chat.ID, fsm.GetEmailRequestMessage())
-		sentMsg, err := b.api.Send(msg)
-		if err != nil {
-			log.Printf("Error sending email request: %v", err)
-			return
-		}
-
-		// Log outgoing message
-		if err := b.storage.LogMessage(user.TelegramID, sentMsg.Text, "outgoing"); err != nil {
-			log.Printf("Error logging outgoing message: %v", err)
-		}
-
+		b.handleSiteLinkYes(query, user)
 	case "site_link_no":
-		// User declined site link
-		if err := b.storage.UpdateUserFSMState(user.TelegramID, string(fsm.StateIdle)); err != nil {
-			log.Printf("Error updating FSM state: %v", err)
-		}
-
-		msg := tgbotapi.NewMessage(query.Message.Chat.ID, fsm.GetSiteLinkDeclinedMessage())
-		sentMsg, err := b.api.Send(msg)
-		if err != nil {
-			log.Printf("Error sending decline message: %v", err)
-			return
-		}
-
-		// Log outgoing message
-		if err := b.storage.LogMessage(user.TelegramID, sentMsg.Text, "outgoing"); err != nil {
-			log.Printf("Error logging outgoing message: %v", err)
-		}
-
+		b.handleSiteLinkNo(query, user)
 	case "email_consent_yes":
-		// User granted email consent
-		// Get the email from awaiting_email_consent state context
-		// In real implementation, we'd need to store the email temporarily
-		// For now, we'll save the email that was entered
-
-		// Since we're in awaiting_email_consent state, the email was already validated
-		// We just need to update consent
-		if user.Email != "" {
-			if err := b.storage.UpdateUserEmail(user.TelegramID, user.Email, true); err != nil {
-				log.Printf("Error updating user email consent: %v", err)
-			}
-		}
-
-		if err := b.storage.UpdateUserFSMState(user.TelegramID, string(fsm.StateIdle)); err != nil {
-			log.Printf("Error updating FSM state: %v", err)
-		}
-
-		msg := tgbotapi.NewMessage(query.Message.Chat.ID, fsm.GetEmailSavedMessage(settings.SiteURL))
-		sentMsg, err := b.api.Send(msg)
-		if err != nil {
-			log.Printf("Error sending confirmation: %v", err)
-			return
-		}
-
-		// Log outgoing message
-		if err := b.storage.LogMessage(user.TelegramID, sentMsg.Text, "outgoing"); err != nil {
-			log.Printf("Error logging outgoing message: %v", err)
-		}
-
+		b.handleEmailConsentYes(query, user, settings)
 	case "email_consent_no":
-		// User declined email consent
-		if err := b.storage.UpdateUserFSMState(user.TelegramID, string(fsm.StateIdle)); err != nil {
-			log.Printf("Error updating FSM state: %v", err)
+		b.handleEmailConsentNo(query, user, settings)
+	default:
+		if strings.HasPrefix(query.Data, "email_confirm_") {
+			b.handleEmailConfirm(query, user)
+		} else if strings.HasPrefix(query.Data, "start_scenario_") {
+			b.handleStartScenario(query, user)
+		} else if strings.HasPrefix(query.Data, "option_") {
+			b.handleOption(query, user)
+		} else if strings.HasPrefix(query.Data, "goto_") {
+			b.handleGoto(query, user)
+		} else {
+			log.Printf("Unknown callback data: %s", query.Data)
+		}
+	}
+}
+
+// handleSiteLinkYes handles user accepting site link offer
+func (b *Bot) handleSiteLinkYes(query *tgbotapi.CallbackQuery, user *storage.User) {
+	// User wants to visit site, request email
+	if err := b.storage.UpdateUserFSMState(user.TelegramID, string(fsm.StateAwaitingEmail)); err != nil {
+		log.Printf("Error updating FSM state: %v", err)
+	}
+
+	msg := tgbotapi.NewMessage(query.Message.Chat.ID, fsm.GetEmailRequestMessage())
+	sentMsg, err := b.api.Send(msg)
+	if err != nil {
+		log.Printf("Error sending email request: %v", err)
+		return
+	}
+
+	// Log outgoing message
+	if err := b.storage.LogMessage(user.TelegramID, sentMsg.Text, "outgoing"); err != nil {
+		log.Printf("Error logging outgoing message: %v", err)
+	}
+}
+
+// handleSiteLinkNo handles user declining site link offer
+func (b *Bot) handleSiteLinkNo(query *tgbotapi.CallbackQuery, user *storage.User) {
+	// User declined site link
+	if err := b.storage.UpdateUserFSMState(user.TelegramID, string(fsm.StateIdle)); err != nil {
+		log.Printf("Error updating FSM state: %v", err)
+	}
+
+	msg := tgbotapi.NewMessage(query.Message.Chat.ID, fsm.GetSiteLinkDeclinedMessage())
+	sentMsg, err := b.api.Send(msg)
+	if err != nil {
+		log.Printf("Error sending decline message: %v", err)
+		return
+	}
+
+	// Log outgoing message
+	if err := b.storage.LogMessage(user.TelegramID, sentMsg.Text, "outgoing"); err != nil {
+		log.Printf("Error logging outgoing message: %v", err)
+	}
+}
+
+// handleEmailConsentYes handles user granting email consent
+func (b *Bot) handleEmailConsentYes(query *tgbotapi.CallbackQuery, user *storage.User, settings *storage.Settings) {
+	// User granted email consent
+	// Since we're in awaiting_email_consent state, the email was already validated
+	// We just need to update consent
+	if user.Email != "" {
+		if err := b.storage.UpdateUserEmail(user.TelegramID, user.Email, true); err != nil {
+			log.Printf("Error updating user email consent: %v", err)
+		}
+	}
+
+	if err := b.storage.UpdateUserFSMState(user.TelegramID, string(fsm.StateIdle)); err != nil {
+		log.Printf("Error updating FSM state: %v", err)
+	}
+
+	msg := tgbotapi.NewMessage(query.Message.Chat.ID, fsm.GetEmailSavedMessage(settings.SiteURL))
+	sentMsg, err := b.api.Send(msg)
+	if err != nil {
+		log.Printf("Error sending confirmation: %v", err)
+		return
+	}
+
+	// Log outgoing message
+	if err := b.storage.LogMessage(user.TelegramID, sentMsg.Text, "outgoing"); err != nil {
+		log.Printf("Error logging outgoing message: %v", err)
+	}
+}
+
+// handleEmailConsentNo handles user declining email consent
+func (b *Bot) handleEmailConsentNo(query *tgbotapi.CallbackQuery, user *storage.User, settings *storage.Settings) {
+	// User declined email consent
+	if err := b.storage.UpdateUserFSMState(user.TelegramID, string(fsm.StateIdle)); err != nil {
+		log.Printf("Error updating FSM state: %v", err)
+	}
+
+	msg := tgbotapi.NewMessage(query.Message.Chat.ID, fsm.GetEmailDeclinedMessage(settings.SiteURL))
+	sentMsg, err := b.api.Send(msg)
+	if err != nil {
+		log.Printf("Error sending decline message: %v", err)
+		return
+	}
+
+	// Log outgoing message
+	if err := b.storage.LogMessage(user.TelegramID, sentMsg.Text, "outgoing"); err != nil {
+		log.Printf("Error logging outgoing message: %v", err)
+	}
+}
+
+// handleEmailConfirm handles email confirmation buttons
+func (b *Bot) handleEmailConfirm(query *tgbotapi.CallbackQuery, user *storage.User) {
+	email := strings.TrimPrefix(query.Data, "email_confirm_")
+
+	// Save email temporarily and show consent buttons
+	if err := b.storage.UpdateUserEmail(user.TelegramID, email, false); err != nil {
+		log.Printf("Error saving email: %v", err)
+	}
+
+	if err := b.storage.UpdateUserFSMState(user.TelegramID, string(fsm.StateAwaitingEmailConsent)); err != nil {
+		log.Printf("Error updating FSM state: %v", err)
+	}
+
+	msg := tgbotapi.NewMessage(query.Message.Chat.ID, fsm.GetEmailConsentMessage())
+
+	// Add consent buttons
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("Разрешаю", "email_consent_yes"),
+			tgbotapi.NewInlineKeyboardButtonData("Нет, спасибо", "email_consent_no"),
+		),
+	)
+	msg.ReplyMarkup = keyboard
+
+	sentMsg, err := b.api.Send(msg)
+	if err != nil {
+		log.Printf("Error sending consent request: %v", err)
+		return
+	}
+
+	// Log outgoing message
+	if err := b.storage.LogMessage(user.TelegramID, sentMsg.Text, "outgoing"); err != nil {
+		log.Printf("Error logging outgoing message: %v", err)
+	}
+}
+
+// handleStartScenario handles scenario start
+func (b *Bot) handleStartScenario(query *tgbotapi.CallbackQuery, user *storage.User) {
+	scenarioIDStr := strings.TrimPrefix(query.Data, "start_scenario_")
+	scenarioID, err := strconv.Atoi(scenarioIDStr)
+	if err != nil {
+		log.Printf("Error parsing scenario ID: %v", err)
+		return
+	}
+
+	// Get scenario
+	scenario, err := b.storage.GetFSMScenario(scenarioID)
+	if err != nil {
+		log.Printf("Error getting scenario: %v", err)
+		return
+	}
+	if scenario == nil {
+		log.Printf("Scenario not found: %d", scenarioID)
+		return
+	}
+
+	// Start scenario
+	step, err := b.fsm.GetFirstStep(scenarioID)
+	if err != nil {
+		log.Printf("Error getting first step: %v", err)
+		return
+	}
+	if step != nil {
+		err = b.storage.UpdateUserSession(user.TelegramID, &scenarioID, &step.StepKey)
+		if err != nil {
+			log.Printf("Error updating session: %v", err)
+			return
 		}
 
-		msg := tgbotapi.NewMessage(query.Message.Chat.ID, fsm.GetEmailDeclinedMessage(settings.SiteURL))
+		buttons := b.fsm.GenerateButtonsForStep(step, scenarioID)
+		msg := tgbotapi.NewMessage(query.Message.Chat.ID, step.Message)
+		if len(buttons) > 0 {
+			keyboard := b.createInlineKeyboard(buttons)
+			msg.ReplyMarkup = keyboard
+		}
+
 		sentMsg, err := b.api.Send(msg)
 		if err != nil {
-			log.Printf("Error sending decline message: %v", err)
+			log.Printf("Error sending scenario start message: %v", err)
 			return
 		}
 
@@ -312,35 +448,89 @@ func (b *Bot) handleCallbackQuery(query *tgbotapi.CallbackQuery) {
 		if err := b.storage.LogMessage(user.TelegramID, sentMsg.Text, "outgoing"); err != nil {
 			log.Printf("Error logging outgoing message: %v", err)
 		}
+	}
+}
 
-	default:
-		// Handle email confirmation buttons with email embedded in callback data
-		if strings.HasPrefix(query.Data, "email_confirm_") {
-			email := strings.TrimPrefix(query.Data, "email_confirm_")
+// handleOption handles option selection
+func (b *Bot) handleOption(query *tgbotapi.CallbackQuery, user *storage.User) {
+	parts := strings.Split(query.Data, "_")
+	if len(parts) >= 4 {
+		scenarioID, _ := strconv.Atoi(parts[1])
+		stepKey := parts[2]
+		optionNum := parts[3]
 
-			// Save email temporarily and show consent buttons
-			if err := b.storage.UpdateUserEmail(user.TelegramID, email, false); err != nil {
-				log.Printf("Error saving email: %v", err)
+		// Find next step based on option
+		steps, err := b.storage.GetFSMScenarioSteps(scenarioID)
+		if err != nil {
+			log.Printf("Error getting steps: %v", err)
+			return
+		}
+
+		var nextStep *storage.FSMScenarioStep
+		for _, step := range steps {
+			if step.StepKey == stepKey+"_"+optionNum {
+				nextStep = step
+				break
+			}
+		}
+
+		if nextStep != nil {
+			err = b.storage.UpdateUserSession(user.TelegramID, &scenarioID, &nextStep.StepKey)
+			if err != nil {
+				log.Printf("Error updating session: %v", err)
+				return
 			}
 
-			if err := b.storage.UpdateUserFSMState(user.TelegramID, string(fsm.StateAwaitingEmailConsent)); err != nil {
-				log.Printf("Error updating FSM state: %v", err)
+			buttons := b.fsm.GenerateButtonsForStep(nextStep, scenarioID)
+			msg := tgbotapi.NewMessage(query.Message.Chat.ID, nextStep.Message)
+			if len(buttons) > 0 {
+				keyboard := b.createInlineKeyboard(buttons)
+				msg.ReplyMarkup = keyboard
 			}
-
-			msg := tgbotapi.NewMessage(query.Message.Chat.ID, fsm.GetEmailConsentMessage())
-
-			// Add consent buttons
-			keyboard := tgbotapi.NewInlineKeyboardMarkup(
-				tgbotapi.NewInlineKeyboardRow(
-					tgbotapi.NewInlineKeyboardButtonData("Разрешаю", "email_consent_yes"),
-					tgbotapi.NewInlineKeyboardButtonData("Нет, спасибо", "email_consent_no"),
-				),
-			)
-			msg.ReplyMarkup = keyboard
 
 			sentMsg, err := b.api.Send(msg)
 			if err != nil {
-				log.Printf("Error sending consent request: %v", err)
+				log.Printf("Error sending option response: %v", err)
+				return
+			}
+
+			// Log outgoing message
+			if err := b.storage.LogMessage(user.TelegramID, sentMsg.Text, "outgoing"); err != nil {
+				log.Printf("Error logging outgoing message: %v", err)
+			}
+		}
+	}
+}
+
+// handleGoto handles goto step
+func (b *Bot) handleGoto(query *tgbotapi.CallbackQuery, user *storage.User) {
+	parts := strings.Split(query.Data, "_")
+	if len(parts) >= 3 {
+		scenarioID, _ := strconv.Atoi(parts[1])
+		stepKey := parts[2]
+
+		step, err := b.storage.GetFSMScenarioStep(scenarioID, stepKey)
+		if err != nil {
+			log.Printf("Error getting step: %v", err)
+			return
+		}
+		if step != nil {
+			err = b.storage.UpdateUserSession(user.TelegramID, &scenarioID, &step.StepKey)
+			if err != nil {
+				log.Printf("Error updating session: %v", err)
+				return
+			}
+
+			buttons := b.fsm.GenerateButtonsForStep(step, scenarioID)
+			msg := tgbotapi.NewMessage(query.Message.Chat.ID, step.Message)
+			if len(buttons) > 0 {
+				keyboard := b.createInlineKeyboard(buttons)
+				msg.ReplyMarkup = keyboard
+			}
+
+			sentMsg, err := b.api.Send(msg)
+			if err != nil {
+				log.Printf("Error sending goto response: %v", err)
 				return
 			}
 
@@ -365,6 +555,23 @@ func (b *Bot) Stop() {
 // GetUsername returns bot username
 func (b *Bot) GetUsername() string {
 	return b.api.Self.UserName
+}
+
+// createInlineKeyboard creates inline keyboard from buttons
+func (b *Bot) createInlineKeyboard(buttons []fsm.Button) tgbotapi.InlineKeyboardMarkup {
+	var rows [][]tgbotapi.InlineKeyboardButton
+
+	// Group buttons into rows of 2
+	for i := 0; i < len(buttons); i += 2 {
+		var row []tgbotapi.InlineKeyboardButton
+		row = append(row, tgbotapi.NewInlineKeyboardButtonData(buttons[i].Text, buttons[i].CallbackData))
+		if i+1 < len(buttons) {
+			row = append(row, tgbotapi.NewInlineKeyboardButtonData(buttons[i+1].Text, buttons[i+1].CallbackData))
+		}
+		rows = append(rows, row)
+	}
+
+	return tgbotapi.NewInlineKeyboardMarkup(rows...)
 }
 
 // GetUserIDFromString converts string to user ID

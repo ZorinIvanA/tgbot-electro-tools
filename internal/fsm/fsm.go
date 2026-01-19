@@ -12,6 +12,12 @@ import (
 	"github.com/ZorinIvanA/tgbot-electro-tools/internal/storage"
 )
 
+// Button represents an inline keyboard button
+type Button struct {
+	Text         string
+	CallbackData string
+}
+
 // State represents FSM state
 type State string
 
@@ -44,12 +50,12 @@ func NewFSM(storage storage.Storage, openAIEnabled bool, openAIURL, openAIKey, o
 	}
 }
 
-// ProcessMessage processes incoming message and returns response and whether it was handled
-func (f *FSM) ProcessMessage(userID int64, message string) (response string, handled bool, err error) {
+// ProcessMessage processes incoming message and returns response, buttons and whether it was handled
+func (f *FSM) ProcessMessage(userID int64, message string) (response string, buttons []Button, handled bool, err error) {
 	// Get user's current session
 	session, err := f.storage.GetUserSession(userID)
 	if err != nil {
-		return "", false, fmt.Errorf("failed to get user session: %w", err)
+		return "", nil, false, fmt.Errorf("failed to get user session: %w", err)
 	}
 
 	// If no active session, check for triggers or use AI if enabled
@@ -62,16 +68,17 @@ func (f *FSM) ProcessMessage(userID int64, message string) (response string, han
 				fmt.Printf("AI recognition failed: %v\n", err)
 			} else if scenario != nil {
 				// Start scenario
-				step, err := f.getFirstStep(scenario.ID)
+				step, err := f.GetFirstStep(scenario.ID)
 				if err != nil {
-					return "", false, fmt.Errorf("failed to get first step: %w", err)
+					return "", nil, false, fmt.Errorf("failed to get first step: %w", err)
 				}
 				if step != nil {
 					err = f.storage.UpdateUserSession(userID, &scenario.ID, &step.StepKey)
 					if err != nil {
-						return "", false, fmt.Errorf("failed to update session: %w", err)
+						return "", nil, false, fmt.Errorf("failed to update session: %w", err)
 					}
-					return step.Message, true, nil
+					buttons = f.GenerateButtonsForStep(step, scenario.ID)
+					return step.Message, buttons, true, nil
 				}
 			}
 		}
@@ -79,67 +86,69 @@ func (f *FSM) ProcessMessage(userID int64, message string) (response string, han
 		// Fallback to keyword matching
 		scenario, err := f.storage.GetFSMScenarioByTrigger(message)
 		if err != nil {
-			return "", false, fmt.Errorf("failed to check triggers: %w", err)
+			return "", nil, false, fmt.Errorf("failed to check triggers: %w", err)
 		}
 		if scenario != nil {
-			step, err := f.getFirstStep(scenario.ID)
+			step, err := f.GetFirstStep(scenario.ID)
 			if err != nil {
-				return "", false, fmt.Errorf("failed to get first step: %w", err)
+				return "", nil, false, fmt.Errorf("failed to get first step: %w", err)
 			}
 			if step != nil {
 				err = f.storage.UpdateUserSession(userID, &scenario.ID, &step.StepKey)
 				if err != nil {
-					return "", false, fmt.Errorf("failed to update session: %w", err)
+					return "", nil, false, fmt.Errorf("failed to update session: %w", err)
 				}
-				return step.Message, true, nil
+				buttons = f.GenerateButtonsForStep(step, scenario.ID)
+				return step.Message, buttons, true, nil
 			}
 		}
 
 		// No scenario triggered
-		return "", false, nil
+		return "", nil, false, nil
 	}
 
 	// Continue existing scenario
 	step, err := f.storage.GetFSMScenarioStep(*session.ScenarioID, *session.CurrentStepKey)
 	if err != nil {
-		return "", false, fmt.Errorf("failed to get current step: %w", err)
+		return "", nil, false, fmt.Errorf("failed to get current step: %w", err)
 	}
 	if step == nil {
 		// Invalid step, clear session
 		f.storage.DeleteUserSession(userID)
-		return "", false, nil
+		return "", nil, false, nil
 	}
 
 	// If this is a final step, clear session and return response
 	if step.IsFinal {
 		f.storage.DeleteUserSession(userID)
-		return step.Message, true, nil
+		return step.Message, nil, true, nil
 	}
 
 	// Move to next step
 	if step.NextStepKey == nil {
 		// No next step, clear session
 		f.storage.DeleteUserSession(userID)
-		return step.Message, true, nil
+		return step.Message, nil, true, nil
 	}
 
 	nextStep, err := f.storage.GetFSMScenarioStep(*session.ScenarioID, *step.NextStepKey)
 	if err != nil {
-		return "", false, fmt.Errorf("failed to get next step: %w", err)
+		return "", nil, false, fmt.Errorf("failed to get next step: %w", err)
 	}
 	if nextStep == nil {
 		// Invalid next step, clear session
 		f.storage.DeleteUserSession(userID)
-		return step.Message, true, nil
+		return step.Message, nil, true, nil
 	}
 
 	// Update session with next step
 	err = f.storage.UpdateUserSession(userID, session.ScenarioID, &nextStep.StepKey)
 	if err != nil {
-		return "", false, fmt.Errorf("failed to update session: %w", err)
+		return "", nil, false, fmt.Errorf("failed to update session: %w", err)
 	}
 
-	return nextStep.Message, true, nil
+	buttons = f.GenerateButtonsForStep(nextStep, *session.ScenarioID)
+	return nextStep.Message, buttons, true, nil
 }
 
 // recognizeScenarioWithAI uses OpenAI-compatible API to recognize the scenario
@@ -254,8 +263,8 @@ func (f *FSM) recognizeScenarioWithAI(message string) (*storage.FSMScenario, err
 	return nil, nil
 }
 
-// getFirstStep returns the first step of a scenario
-func (f *FSM) getFirstStep(scenarioID int) (*storage.FSMScenarioStep, error) {
+// GetFirstStep returns the first step of a scenario
+func (f *FSM) GetFirstStep(scenarioID int) (*storage.FSMScenarioStep, error) {
 	steps, err := f.storage.GetFSMScenarioSteps(scenarioID)
 	if err != nil {
 		return nil, err
@@ -267,6 +276,72 @@ func (f *FSM) getFirstStep(scenarioID int) (*storage.FSMScenarioStep, error) {
 
 	// Return the first step (assuming steps are ordered by ID)
 	return steps[0], nil
+}
+
+// GenerateButtonsForStep generates buttons for a given step
+func (f *FSM) GenerateButtonsForStep(step *storage.FSMScenarioStep, scenarioID int) []Button {
+	// Parse buttons from message content
+	buttons := f.parseButtonsFromMessage(step.Message, scenarioID, step.StepKey)
+
+	// If no buttons parsed, check if there are next steps to show as options
+	if len(buttons) == 0 {
+		buttons = f.getNextStepButtons(scenarioID, step.StepKey)
+	}
+
+	return buttons
+}
+
+// parseButtonsFromMessage parses buttons from message text
+func (f *FSM) parseButtonsFromMessage(message string, scenarioID int, stepKey string) []Button {
+	var buttons []Button
+
+	// Look for numbered options like "1. Option", "2. Option"
+	lines := strings.Split(message, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "1.") || strings.HasPrefix(line, "2.") || strings.HasPrefix(line, "3.") {
+			// Extract option text
+			parts := strings.SplitN(line, ".", 2)
+			if len(parts) == 2 {
+				text := strings.TrimSpace(parts[1])
+				callbackData := fmt.Sprintf("option_%d_%s_%s", scenarioID, stepKey, parts[0])
+				buttons = append(buttons, Button{
+					Text:         text,
+					CallbackData: callbackData,
+				})
+			}
+		}
+	}
+
+	return buttons
+}
+
+// getNextStepButtons gets buttons for next possible steps
+func (f *FSM) getNextStepButtons(scenarioID int, currentStepKey string) []Button {
+	steps, err := f.storage.GetFSMScenarioSteps(scenarioID)
+	if err != nil {
+		return nil
+	}
+
+	var buttons []Button
+	for _, step := range steps {
+		if step.StepKey != currentStepKey && step.StepKey != "step1" { // Don't include current or first step
+			buttons = append(buttons, Button{
+				Text:         step.Message[:min(50, len(step.Message))], // Truncate long messages
+				CallbackData: fmt.Sprintf("goto_%d_%s", scenarioID, step.StepKey),
+			})
+		}
+	}
+
+	return buttons
+}
+
+// min returns minimum of two ints
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // containsUSHMTrigger checks if message contains УШМ problem triggers
@@ -355,4 +430,22 @@ func GetSiteLinkDeclinedMessage() string {
 // GetRateLimitMessage returns rate limit exceeded message
 func GetRateLimitMessage() string {
 	return "Пожалуйста, подождите немного. Вы отправляете сообщения слишком часто."
+}
+
+// GetScenariosButtons returns buttons for all available scenarios
+func (f *FSM) GetScenariosButtons() ([]Button, error) {
+	scenarios, err := f.storage.GetFSMScenarios()
+	if err != nil {
+		return nil, err
+	}
+
+	var buttons []Button
+	for _, scenario := range scenarios {
+		buttons = append(buttons, Button{
+			Text:         scenario.Name,
+			CallbackData: fmt.Sprintf("start_scenario_%d", scenario.ID),
+		})
+	}
+
+	return buttons, nil
 }
