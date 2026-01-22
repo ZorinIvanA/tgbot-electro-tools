@@ -280,17 +280,20 @@ func (f *FSM) GetFirstStep(scenarioID int) (*storage.FSMScenarioStep, error) {
 
 // GenerateButtonsForStep generates buttons for a given step
 func (f *FSM) GenerateButtonsForStep(step *storage.FSMScenarioStep, scenarioID int) []Button {
-	// Parse buttons from message content
-	buttons := f.parseButtonsFromMessage(step.Message, scenarioID, step.StepKey)
+	var buttons []Button
 
-	// If no buttons parsed, check if there are next steps to show as options
-	if len(buttons) == 0 {
-		buttons = f.getNextStepButtons(scenarioID, step.StepKey)
-	}
-
-	// Special handling for action steps - generate buttons for terminal actions
-	if strings.HasSuffix(step.StepKey, "_action") {
-		buttons = f.generateActionButtons(scenarioID, step.StepKey)
+	// For root steps, show problem options
+	if step.StepKey == "root" {
+		buttons = f.getProblemButtons(scenarioID)
+	} else {
+		// For diagnostic steps, try to find yes/no pattern
+		diagnosticButtons := f.getDiagnosticButtons(scenarioID, step.StepKey)
+		if len(diagnosticButtons) > 0 {
+			buttons = diagnosticButtons
+		} else {
+			// Fallback to parsing buttons from message content
+			buttons = f.parseButtonsFromMessage(step.Message, scenarioID, step.StepKey)
+		}
 	}
 
 	// Add back button if not at root
@@ -305,14 +308,145 @@ func (f *FSM) GenerateButtonsForStep(step *storage.FSMScenarioStep, scenarioID i
 	return buttons
 }
 
-// GetPreviousStepKey returns the previous step key for navigation
-func (f *FSM) GetPreviousStepKey(currentStepKey string) string {
-	// For action steps, go back to the problem step
-	if strings.HasSuffix(currentStepKey, "_action") {
-		return strings.TrimSuffix(currentStepKey, "_action")
+// getProblemButtons generates buttons for problem selection on root step
+func (f *FSM) getProblemButtons(scenarioID int) []Button {
+	steps, err := f.storage.GetFSMScenarioSteps(scenarioID)
+	if err != nil {
+		return nil
 	}
 
-	// For all other steps, go back to root
+	var buttons []Button
+	// Find all problem steps (steps that start with problem keywords)
+	problemKeywords := []string{"no_power", "stops_during_work", "vibration_noise", "motor_runs_no_blade", "vibration_inaccurate", "blade_no_move", "vibration_drift", "spins_no_torque", "battery_drains", "uneven_vibration"}
+
+	for _, step := range steps {
+		for _, keyword := range problemKeywords {
+			if strings.HasPrefix(step.StepKey, keyword) && step.StepKey == keyword {
+				// Extract problem description from first line
+				firstLine := strings.Split(step.Message, "\n")[0]
+				// Clean up the description
+				problemText := strings.TrimSpace(strings.Split(firstLine, ".")[0])
+				if strings.HasPrefix(problemText, "Устройство") {
+					problemText = strings.TrimPrefix(problemText, "Устройство ")
+				}
+				if strings.HasPrefix(problemText, "Мотор") {
+					problemText = strings.TrimPrefix(problemText, "Мотор ")
+				}
+				if strings.HasPrefix(problemText, "Полотно") {
+					problemText = strings.TrimPrefix(problemText, "Полотно ")
+				}
+				if strings.HasPrefix(problemText, "Вращается") {
+					problemText = "Вращается, но не крутит"
+				}
+				if strings.HasPrefix(problemText, "Аккумулятор") {
+					problemText = "Аккумулятор быстро садится"
+				}
+				if strings.HasPrefix(problemText, "Неровный") {
+					problemText = "Неровный срез или вибрация"
+				}
+
+				buttons = append(buttons, Button{
+					Text:         "• " + problemText,
+					CallbackData: fmt.Sprintf("goto_%d_%s", scenarioID, step.StepKey),
+				})
+				break
+			}
+		}
+	}
+
+	return buttons
+}
+
+// getDiagnosticButtons generates Yes/No buttons for diagnostic questions
+func (f *FSM) getDiagnosticButtons(scenarioID int, currentStepKey string) []Button {
+	steps, err := f.storage.GetFSMScenarioSteps(scenarioID)
+	if err != nil {
+		return nil
+	}
+
+	var buttons []Button
+	baseKey := currentStepKey + "_"
+
+	// Look for steps that continue from current step
+	for _, step := range steps {
+		if strings.HasPrefix(step.StepKey, baseKey) {
+			// Determine button text based on suffix
+			suffix := strings.TrimPrefix(step.StepKey, baseKey)
+			var buttonText string
+
+			switch suffix {
+			case "lit", "ok", "yes", "reacts", "turns", "disk_turns":
+				buttonText = "Да"
+			case "dark", "no", "not_ok", "no_reaction", "disk_stuck", "immediately", "hot", "not_hot", "strong_vibration", "grinding_noise", "other_noise":
+				buttonText = "Нет"
+			case "power_ok":
+				buttonText = "Да, работает"
+			case "no_power":
+				buttonText = "Нет, не работает"
+			case "locks_ok":
+				buttonText = "Да, в порядке"
+			case "locks_not_ok":
+				buttonText = "Нет, проблемы"
+			case "belt_ok":
+				buttonText = "Да, целый"
+			case "belt_broken":
+				buttonText = "Нет, повреждён"
+			case "disk_ok":
+				buttonText = "Да, в порядке"
+			case "disk_problem":
+				buttonText = "Нет, проблемы"
+			case "blade_ok":
+				buttonText = "Да, правильно"
+			case "blade_not_ok":
+				buttonText = "Нет, проблемы"
+			case "clutch_ok":
+				buttonText = "Нет, муфта не сработала"
+			case "clutch_triggered":
+				buttonText = "Да, муфта сработала"
+			case "old":
+				buttonText = "Да, старый"
+			case "new":
+				buttonText = "Нет, новый"
+			case "clear":
+				buttonText = "Да, чистый"
+			case "blocked":
+				buttonText = "Нет, заблокирован"
+			case "wheels_ok":
+				buttonText = "Да, одинаково"
+			case "wheels_not_level":
+				buttonText = "Нет, разная высота"
+			default:
+				continue
+			}
+
+			buttons = append(buttons, Button{
+				Text:         buttonText,
+				CallbackData: fmt.Sprintf("goto_%d_%s", scenarioID, step.StepKey),
+			})
+		}
+	}
+
+	return buttons
+}
+
+// GetPreviousStepKey returns the previous step key for navigation
+func (f *FSM) GetPreviousStepKey(currentStepKey string) string {
+	// For final diagnostic steps, go back to the immediate parent diagnostic step
+	// Remove suffixes to find parent steps
+	if strings.Contains(currentStepKey, "_") {
+		parts := strings.Split(currentStepKey, "_")
+		if len(parts) > 1 {
+			// Remove the last suffix to get parent
+			parentKey := strings.Join(parts[:len(parts)-1], "_")
+
+			// If parent exists and is not root, return it
+			if parentKey != "root" && parentKey != "" {
+				return parentKey
+			}
+		}
+	}
+
+	// Default to root for top-level problem steps
 	return "root"
 }
 
