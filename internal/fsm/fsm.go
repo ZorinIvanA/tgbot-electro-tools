@@ -293,7 +293,27 @@ func (f *FSM) GenerateButtonsForStep(step *storage.FSMScenarioStep, scenarioID i
 		buttons = f.generateActionButtons(scenarioID, step.StepKey)
 	}
 
+	// Add back button if not at root
+	if step.StepKey != "root" {
+		backButton := Button{
+			Text:         "⬅️ Назад",
+			CallbackData: fmt.Sprintf("back_%d_%s", scenarioID, step.StepKey),
+		}
+		buttons = append(buttons, backButton)
+	}
+
 	return buttons
+}
+
+// GetPreviousStepKey returns the previous step key for navigation
+func (f *FSM) GetPreviousStepKey(currentStepKey string) string {
+	// For action steps, go back to the problem step
+	if strings.HasSuffix(currentStepKey, "_action") {
+		return strings.TrimSuffix(currentStepKey, "_action")
+	}
+
+	// For all other steps, go back to root
+	return "root"
 }
 
 // parseButtonsFromMessage parses buttons from message text

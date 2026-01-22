@@ -270,6 +270,8 @@ func (b *Bot) handleCallbackQuery(query *tgbotapi.CallbackQuery) {
 			b.handleGoto(query, user)
 		} else if strings.HasPrefix(query.Data, "action_") {
 			b.handleAction(query, user)
+		} else if strings.HasPrefix(query.Data, "back_") {
+			b.handleBack(query, user)
 		} else {
 			log.Printf("Unknown callback data: %s", query.Data)
 		}
@@ -605,6 +607,49 @@ func (b *Bot) handleAction(query *tgbotapi.CallbackQuery, user *storage.User) {
 			sentMsg, err := b.api.Send(msg)
 			if err != nil {
 				log.Printf("Error sending action response: %v", err)
+				return
+			}
+
+			// Log outgoing message
+			if err := b.storage.LogMessage(user.TelegramID, sentMsg.Text, "outgoing"); err != nil {
+				log.Printf("Error logging outgoing message: %v", err)
+			}
+		}
+	}
+}
+
+// handleBack handles back button navigation
+func (b *Bot) handleBack(query *tgbotapi.CallbackQuery, user *storage.User) {
+	parts := strings.Split(query.Data, "_")
+	if len(parts) >= 3 {
+		scenarioID, _ := strconv.Atoi(parts[1])
+		currentStepKey := parts[2]
+
+		// Get the previous step key
+		previousStepKey := b.fsm.GetPreviousStepKey(currentStepKey)
+
+		step, err := b.storage.GetFSMScenarioStep(scenarioID, previousStepKey)
+		if err != nil {
+			log.Printf("Error getting previous step: %v", err)
+			return
+		}
+		if step != nil {
+			err = b.storage.UpdateUserSession(user.TelegramID, &scenarioID, &step.StepKey)
+			if err != nil {
+				log.Printf("Error updating session: %v", err)
+				return
+			}
+
+			buttons := b.fsm.GenerateButtonsForStep(step, scenarioID)
+			msg := tgbotapi.NewMessage(query.Message.Chat.ID, step.Message)
+			if len(buttons) > 0 {
+				keyboard := b.createInlineKeyboard(buttons)
+				msg.ReplyMarkup = keyboard
+			}
+
+			sentMsg, err := b.api.Send(msg)
+			if err != nil {
+				log.Printf("Error sending back navigation response: %v", err)
 				return
 			}
 
