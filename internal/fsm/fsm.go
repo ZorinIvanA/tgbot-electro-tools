@@ -296,14 +296,12 @@ func (f *FSM) GenerateButtonsForStep(step *storage.FSMScenarioStep, scenarioID i
 		}
 	}
 
-	// Add back button if not at root
-	if step.StepKey != "root" {
-		backButton := Button{
-			Text:         "⬅️ Назад",
-			CallbackData: fmt.Sprintf("back_%d_%s", scenarioID, step.StepKey),
-		}
-		buttons = append(buttons, backButton)
+	// Add back button for all steps (except initial scenario selection)
+	backButton := Button{
+		Text:         "⬅️ Назад",
+		CallbackData: fmt.Sprintf("back_%d_%s", scenarioID, step.StepKey),
 	}
+	buttons = append(buttons, backButton)
 
 	return buttons
 }
@@ -346,7 +344,7 @@ func (f *FSM) getProblemButtons(scenarioID int) []Button {
 				}
 
 				buttons = append(buttons, Button{
-					Text:         "• " + problemText,
+					Text:         problemText,
 					CallbackData: fmt.Sprintf("goto_%d_%s", scenarioID, step.StepKey),
 				})
 				break

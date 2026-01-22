@@ -625,6 +625,39 @@ func (b *Bot) handleBack(query *tgbotapi.CallbackQuery, user *storage.User) {
 		scenarioID, _ := strconv.Atoi(parts[1])
 		currentStepKey := parts[2]
 
+		// If we're on the root step, go back to scenario selection
+		if currentStepKey == "root" {
+			// Clear session to return to scenario selection
+			if err := b.storage.DeleteUserSession(user.TelegramID); err != nil {
+				log.Printf("Error clearing session: %v", err)
+				return
+			}
+
+			// Show scenario selection
+			msg := tgbotapi.NewMessage(query.Message.Chat.ID, fsm.GetStartMessage())
+			scenariosButtons, err := b.fsm.GetScenariosButtons()
+			if err != nil {
+				log.Printf("Error getting scenarios buttons: %v", err)
+				return
+			}
+			if len(scenariosButtons) > 0 {
+				keyboard := b.createInlineKeyboard(scenariosButtons)
+				msg.ReplyMarkup = keyboard
+			}
+
+			sentMsg, err := b.api.Send(msg)
+			if err != nil {
+				log.Printf("Error sending scenario selection: %v", err)
+				return
+			}
+
+			// Log outgoing message
+			if err := b.storage.LogMessage(user.TelegramID, sentMsg.Text, "outgoing"); err != nil {
+				log.Printf("Error logging outgoing message: %v", err)
+			}
+			return
+		}
+
 		// Get the previous step key
 		previousStepKey := b.fsm.GetPreviousStepKey(currentStepKey)
 
