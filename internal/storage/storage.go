@@ -84,6 +84,7 @@ type FSMScenarioStep struct {
 	Message     string
 	IsFinal     bool
 	NextStepKey *string
+	StateType   string
 }
 
 // UserSession represents a user's current FSM session
@@ -437,7 +438,7 @@ func (s *PostgresStorage) GetFSMScenario(id int) (*FSMScenario, error) {
 
 // GetFSMScenarioSteps returns all steps for a scenario
 func (s *PostgresStorage) GetFSMScenarioSteps(scenarioID int) ([]*FSMScenarioStep, error) {
-	query := `SELECT id, scenario_id, step_key, message, is_final, next_step_key FROM fsm_steps WHERE scenario_id = $1 ORDER BY id`
+	query := `SELECT id, scenario_id, step_key, message, is_final, next_step_key, state_type FROM fsm_steps WHERE scenario_id = $1 ORDER BY id`
 
 	rows, err := s.db.Query(query, scenarioID)
 	if err != nil {
@@ -449,7 +450,7 @@ func (s *PostgresStorage) GetFSMScenarioSteps(scenarioID int) ([]*FSMScenarioSte
 	for rows.Next() {
 		step := &FSMScenarioStep{}
 		var nextStepKey sql.NullString
-		if err := rows.Scan(&step.ID, &step.ScenarioID, &step.StepKey, &step.Message, &step.IsFinal, &nextStepKey); err != nil {
+		if err := rows.Scan(&step.ID, &step.ScenarioID, &step.StepKey, &step.Message, &step.IsFinal, &nextStepKey, &step.StateType); err != nil {
 			return nil, fmt.Errorf("failed to scan FSM scenario step: %w", err)
 		}
 		if nextStepKey.Valid {
@@ -463,11 +464,11 @@ func (s *PostgresStorage) GetFSMScenarioSteps(scenarioID int) ([]*FSMScenarioSte
 
 // GetFSMScenarioStep returns a specific step
 func (s *PostgresStorage) GetFSMScenarioStep(scenarioID int, stepKey string) (*FSMScenarioStep, error) {
-	query := `SELECT id, scenario_id, step_key, message, is_final, next_step_key FROM fsm_steps WHERE scenario_id = $1 AND step_key = $2`
+	query := `SELECT id, scenario_id, step_key, message, is_final, next_step_key, state_type FROM fsm_steps WHERE scenario_id = $1 AND step_key = $2`
 
 	step := &FSMScenarioStep{}
 	var nextStepKey sql.NullString
-	err := s.db.QueryRow(query, scenarioID, stepKey).Scan(&step.ID, &step.ScenarioID, &step.StepKey, &step.Message, &step.IsFinal, &nextStepKey)
+	err := s.db.QueryRow(query, scenarioID, stepKey).Scan(&step.ID, &step.ScenarioID, &step.StepKey, &step.Message, &step.IsFinal, &nextStepKey, &step.StateType)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}

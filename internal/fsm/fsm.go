@@ -282,11 +282,17 @@ func (f *FSM) GetFirstStep(scenarioID int) (*storage.FSMScenarioStep, error) {
 func (f *FSM) GenerateButtonsForStep(step *storage.FSMScenarioStep, scenarioID int) []Button {
 	var buttons []Button
 
-	// For root steps, show problem options
-	if step.StepKey == "root" {
-		buttons = f.getProblemButtons(scenarioID)
-	} else {
-		// For diagnostic steps, try to find yes/no pattern
+	switch step.StateType {
+	case "start":
+		// Start states: only problem selection buttons, no back button
+		if step.StepKey == "root" {
+			buttons = f.getProblemButtons(scenarioID)
+		} else {
+			// Fallback to parsing buttons from message content
+			buttons = f.parseButtonsFromMessage(step.Message, scenarioID, step.StepKey)
+		}
+	case "intermediate":
+		// Intermediate states: transition buttons + back button
 		diagnosticButtons := f.getDiagnosticButtons(scenarioID, step.StepKey)
 		if len(diagnosticButtons) > 0 {
 			buttons = diagnosticButtons
@@ -294,14 +300,34 @@ func (f *FSM) GenerateButtonsForStep(step *storage.FSMScenarioStep, scenarioID i
 			// Fallback to parsing buttons from message content
 			buttons = f.parseButtonsFromMessage(step.Message, scenarioID, step.StepKey)
 		}
+		// Add back button
+		backButton := Button{
+			Text:         "⬅️ Назад",
+			CallbackData: fmt.Sprintf("back_%d_%s", scenarioID, step.StepKey),
+		}
+		buttons = append(buttons, backButton)
+	case "final":
+		// Final states: only back button
+		backButton := Button{
+			Text:         "⬅️ Назад",
+			CallbackData: fmt.Sprintf("back_%d_%s", scenarioID, step.StepKey),
+		}
+		buttons = []Button{backButton}
+	default:
+		// Fallback for undefined state types
+		diagnosticButtons := f.getDiagnosticButtons(scenarioID, step.StepKey)
+		if len(diagnosticButtons) > 0 {
+			buttons = diagnosticButtons
+		} else {
+			buttons = f.parseButtonsFromMessage(step.Message, scenarioID, step.StepKey)
+		}
+		// Add back button as fallback
+		backButton := Button{
+			Text:         "⬅️ Назад",
+			CallbackData: fmt.Sprintf("back_%d_%s", scenarioID, step.StepKey),
+		}
+		buttons = append(buttons, backButton)
 	}
-
-	// Add back button for all steps (except initial scenario selection)
-	backButton := Button{
-		Text:         "⬅️ Назад",
-		CallbackData: fmt.Sprintf("back_%d_%s", scenarioID, step.StepKey),
-	}
-	buttons = append(buttons, backButton)
 
 	return buttons
 }
