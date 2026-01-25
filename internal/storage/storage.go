@@ -14,6 +14,7 @@ type Storage interface {
 	// User operations
 	GetOrCreateUser(telegramID int64) (*User, error)
 	UpdateUserMessageCount(telegramID int64) error
+	ResetUserMessageCount(telegramID int64) error
 	UpdateUserFSMState(telegramID int64, state string) error
 	UpdateUserEmail(telegramID int64, email string, consentGranted bool) error
 	GetUser(telegramID int64) (*User, error)
@@ -169,6 +170,16 @@ func (s *PostgresStorage) UpdateUserMessageCount(telegramID int64) error {
 	_, err := s.db.Exec(query, telegramID)
 	if err != nil {
 		return fmt.Errorf("failed to update message count: %w", err)
+	}
+	return nil
+}
+
+// ResetUserMessageCount resets user's message count to 0
+func (s *PostgresStorage) ResetUserMessageCount(telegramID int64) error {
+	query := `UPDATE users SET message_count = 0, updated_at = NOW() WHERE telegram_id = $1`
+	_, err := s.db.Exec(query, telegramID)
+	if err != nil {
+		return fmt.Errorf("failed to reset message count: %w", err)
 	}
 	return nil
 }
