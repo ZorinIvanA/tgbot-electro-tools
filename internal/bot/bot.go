@@ -508,10 +508,14 @@ func (b *Bot) handleOption(query *tgbotapi.CallbackQuery, user *storage.User) {
 
 // handleGoto handles goto step
 func (b *Bot) handleGoto(query *tgbotapi.CallbackQuery, user *storage.User) {
-	parts := strings.Split(query.Data, "_")
+	// Format: goto_<scenarioID>_<stepKey>
+	// stepKey can contain underscores, so we need to parse carefully
+	parts := strings.SplitN(query.Data, "_", 3)
 	if len(parts) >= 3 {
 		scenarioID, _ := strconv.Atoi(parts[1])
 		stepKey := parts[2]
+
+		log.Printf("handleGoto: scenarioID=%d, stepKey=%s", scenarioID, stepKey)
 
 		step, err := b.storage.GetFSMScenarioStep(scenarioID, stepKey)
 		if err != nil {
@@ -542,6 +546,8 @@ func (b *Bot) handleGoto(query *tgbotapi.CallbackQuery, user *storage.User) {
 			if err := b.storage.LogMessage(user.TelegramID, sentMsg.Text, "outgoing"); err != nil {
 				log.Printf("Error logging outgoing message: %v", err)
 			}
+		} else {
+			log.Printf("Step not found: scenarioID=%d, stepKey=%s", scenarioID, stepKey)
 		}
 	}
 }
