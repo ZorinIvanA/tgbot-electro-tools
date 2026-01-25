@@ -382,6 +382,13 @@ func (f *FSM) getProblemButtons(scenarioID int) []Button {
 		}
 	}
 
+	// Add back button to problem selection
+	backButton := Button{
+		Text:         "⬅️ Назад",
+		CallbackData: fmt.Sprintf("back_%d_root", scenarioID),
+	}
+	buttons = append(buttons, backButton)
+
 	return buttons
 }
 
