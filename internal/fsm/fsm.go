@@ -22,12 +22,13 @@ type Button struct {
 type State string
 
 const (
-	StateIdle                 State = "idle"
-	StateUSHMNotStartingStep1 State = "ushm_not_starting_step1"
-	StateUSHMNotStartingStep2 State = "ushm_not_starting_step2"
-	StateAwaitingEmail        State = "awaiting_email"
-	StateAwaitingEmailConsent State = "awaiting_email_consent"
-	StateOfferingSiteLink     State = "offering_site_link"
+	StateIdle                    State = "idle"
+	StateUSHMNotStartingStep1   State = "ushm_not_starting_step1"
+	StateUSHMNotStartingStep2   State = "ushm_not_starting_step2"
+	StateAwaitingEmail          State = "awaiting_email"
+	StateAwaitingEmailConsent    State = "awaiting_email_consent"
+	StateOfferingSiteLink       State = "offering_site_link"
+	StateOfferingSitePost       State = "offering_site_post"
 )
 
 // FSM represents the finite state machine
@@ -750,6 +751,11 @@ func GetSiteLinkDeclinedMessage() string {
 // GetRateLimitMessage returns rate limit exceeded message
 func GetRateLimitMessage() string {
 	return "Пожалуйста, подождите немного. Вы отправляете сообщения слишком часто."
+}
+
+// GetSiteLinkOfferPost returns the message with site link and back button
+func GetSiteLinkOfferPost(siteURL string) string {
+	return "Отличный выбор! Вот ссылка на полезные материалы: " + siteURL + "\n\n⬅️ Назад"
 }
 
 // GetScenariosButtons returns buttons for all available scenarios
