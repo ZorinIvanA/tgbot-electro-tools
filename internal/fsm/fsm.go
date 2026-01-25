@@ -300,12 +300,14 @@ func (f *FSM) GenerateButtonsForStep(step *storage.FSMScenarioStep, scenarioID i
 			// Fallback to parsing buttons from message content
 			buttons = f.parseButtonsFromMessage(step.Message, scenarioID, step.StepKey)
 		}
-		// Add back button
-		backButton := Button{
-			Text:         "⬅️ Назад",
-			CallbackData: fmt.Sprintf("back_%d_%s", scenarioID, step.StepKey),
+		// Add back button (but not on root step)
+		if step.StepKey != "root" {
+			backButton := Button{
+				Text:         "⬅️ Назад",
+				CallbackData: fmt.Sprintf("back_%d_%s", scenarioID, step.StepKey),
+			}
+			buttons = append(buttons, backButton)
 		}
-		buttons = append(buttons, backButton)
 	case "final":
 		// Final states: only back button
 		backButton := Button{
@@ -321,12 +323,14 @@ func (f *FSM) GenerateButtonsForStep(step *storage.FSMScenarioStep, scenarioID i
 		} else {
 			buttons = f.parseButtonsFromMessage(step.Message, scenarioID, step.StepKey)
 		}
-		// Add back button as fallback
-		backButton := Button{
-			Text:         "⬅️ Назад",
-			CallbackData: fmt.Sprintf("back_%d_%s", scenarioID, step.StepKey),
+		// Add back button as fallback (but not on root step)
+		if step.StepKey != "root" {
+			backButton := Button{
+				Text:         "⬅️ Назад",
+				CallbackData: fmt.Sprintf("back_%d_%s", scenarioID, step.StepKey),
+			}
+			buttons = append(buttons, backButton)
 		}
-		buttons = append(buttons, backButton)
 	}
 
 	return buttons
