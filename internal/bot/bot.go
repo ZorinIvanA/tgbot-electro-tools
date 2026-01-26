@@ -277,11 +277,6 @@ func (b *Bot) handleCallbackQuery(query *tgbotapi.CallbackQuery) {
 	}
 	log.Printf("DEBUG: Settings for user %d during callback: TriggerMessageCount=%d", query.From.ID, settings.TriggerMessageCount)
 
-
-	// Answer callback query to remove loading state
-	callback := tgbotapi.NewCallback(query.ID, "")
-	b.api.Request(callback)
-
 	switch query.Data {
 	case "site_link_yes":
 		log.Printf("DEBUG: Handling site_link_yes for user %d", query.From.ID)
