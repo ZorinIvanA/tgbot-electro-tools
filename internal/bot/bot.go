@@ -255,6 +255,19 @@ func (b *Bot) offerSiteLink(chatID int64, user *storage.User) {
 // handleCallbackQuery handles button callbacks
 func (b *Bot) handleCallbackQuery(query *tgbotapi.CallbackQuery) {
 	log.Printf("DEBUG: handleCallbackQuery called for user %d with data: %s", query.From.ID, query.Data)
+	
+	// Check rate limit
+	allowed, err := b.storage.CheckRateLimit(query.From.ID, b.rateLimitPerMin)
+	if err != nil {
+		log.Printf("Error checking rate limit for user %d: %v", query.From.ID, err)
+		return
+	}
+
+	if !allowed {
+		log.Printf("Rate limit exceeded for user %d", query.From.ID)
+		return
+	}
+	
 	// Get user
 	user, err := b.storage.GetUser(query.From.ID)
 	if err != nil {
@@ -268,6 +281,27 @@ func (b *Bot) handleCallbackQuery(query *tgbotapi.CallbackQuery) {
 	}
 	log.Printf("DEBUG: User %d found for callback. MessageCount=%d, FSMState=%s", user.TelegramID, user.MessageCount, user.FSMState)
 
+	// Increment message count for callback queries (THIS IS THE FIX)
+	log.Printf("DEBUG: Attempting to increment message count for user %d (callback)", query.From.ID)
+	if err := b.storage.UpdateUserMessageCount(query.From.ID); err != nil {
+		log.Printf("Error updating message count for user %d (callback): %v", query.From.ID, err)
+	} else {
+		log.Printf("DEBUG: Successfully called UpdateUserMessageCount for user %d (callback)", query.From.ID)
+	}
+
+	// Reload user to get updated message count
+	log.Printf("DEBUG: Reloading user %d to get updated message count (callback)", query.From.ID)
+	user, err = b.storage.GetUser(query.From.ID)
+	if err != nil {
+		log.Printf("Error reloading user %d (callback): %v", query.From.ID, err)
+		return
+	}
+	if user != nil {
+		log.Printf("DEBUG: Reloaded user %d: MessageCount=%d, FSMState=%s (callback)", user.TelegramID, user.MessageCount, user.FSMState)
+	} else {
+		log.Printf("ERROR: Failed to reload user %d, got nil (callback)", query.From.ID)
+		return
+	}
 
 	// Get settings
 	settings, err := b.storage.GetSettings()
