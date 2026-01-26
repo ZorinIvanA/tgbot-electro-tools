@@ -3,6 +3,7 @@ package storage
 import (
 	"database/sql"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -166,21 +167,38 @@ func (s *PostgresStorage) GetOrCreateUser(telegramID int64) (*User, error) {
 
 // UpdateUserMessageCount increments user's message count
 func (s *PostgresStorage) UpdateUserMessageCount(telegramID int64) error {
+	log.Printf("DEBUG: Attempting to update message count for user %d", telegramID)
 	query := `UPDATE users SET message_count = message_count + 1, updated_at = NOW() WHERE telegram_id = $1`
-	_, err := s.db.Exec(query, telegramID)
+	result, err := s.db.Exec(query, telegramID)
 	if err != nil {
+		log.Printf("ERROR: Failed to update message count for user %d: %v", telegramID, err)
 		return fmt.Errorf("failed to update message count: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		log.Printf("ERROR: Failed to get rows affected for user %d: %v", telegramID, err)
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+
+	if rowsAffected == 0 {
+		log.Printf("WARNING: No rows affected when updating message count for user %d. User may not exist.", telegramID)
+	} else {
+		log.Printf("DEBUG: Successfully updated message count for user %d. Rows affected: %d", telegramID, rowsAffected)
 	}
 	return nil
 }
 
 // ResetUserMessageCount resets user's message count to 0
 func (s *PostgresStorage) ResetUserMessageCount(telegramID int64) error {
+	log.Printf("DEBUG: Attempting to reset message count for user %d", telegramID)
 	query := `UPDATE users SET message_count = 0, updated_at = NOW() WHERE telegram_id = $1`
 	_, err := s.db.Exec(query, telegramID)
 	if err != nil {
+		log.Printf("ERROR: Failed to reset message count for user %d: %v", telegramID, err)
 		return fmt.Errorf("failed to reset message count: %w", err)
 	}
+	log.Printf("DEBUG: Successfully reset message count for user %d", telegramID)
 	return nil
 }
 

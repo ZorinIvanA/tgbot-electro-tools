@@ -131,7 +131,6 @@ HTTP_PORT=8080
 ADMIN_API_TOKEN=your_secret_admin_token_here
 
 # Settings
-DEFAULT_TRIGGER_MESSAGE_COUNT=3
 DEFAULT_SITE_URL=https://example.com
 RATE_LIMIT_PER_MINUTE=10
 ```
