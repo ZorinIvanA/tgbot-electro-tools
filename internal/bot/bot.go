@@ -309,6 +309,36 @@ func (b *Bot) handleSiteLinkNoPost(query *tgbotapi.CallbackQuery, user *storage.
 		log.Printf("Error updating FSM state to Idle for user %d: %v", user.TelegramID, err)
 	}
 
+	// Check if user had an active session before the site offer (to include "В начало" button)
+	session, err := b.storage.GetUserSession(user.TelegramID)
+	if err != nil {
+		log.Printf("Error getting user session for user %d: %v", user.TelegramID, err)
+	} else if session != nil && session.ScenarioID != nil && session.CurrentStepKey != nil {
+		// User had a session, so they should be able to return to the beginning
+		msg := tgbotapi.NewMessage(query.Message.Chat.ID, fsm.GetSiteLinkDeclinedMessage())
+
+		// Add "В начало" button to return to scenario selection
+		keyboard := tgbotapi.NewInlineKeyboardMarkup(
+			tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonData("В начало", "site_link_back_to_start"),
+			),
+		)
+		msg.ReplyMarkup = keyboard
+
+		sentMsg, err := b.api.Send(msg)
+		if err != nil {
+			log.Printf("Error sending site link decline with button for user %d: %v", user.TelegramID, err)
+			return
+		}
+
+		if err := b.storage.LogMessage(user.TelegramID, sentMsg.Text, "outgoing"); err != nil {
+			log.Printf("Error logging outgoing message for user %d: %v", user.TelegramID, err)
+		}
+		log.Printf("handleSiteLinkNoPost finished for user %d", user.TelegramID)
+		return
+	}
+
+	// Fallback to standard message without button
 	msg := tgbotapi.NewMessage(query.Message.Chat.ID, "Можете продолжать консультацию. Если возникнут другие вопросы по электроинструменту, напишите мне.")
 	sentMsg, err := b.api.Send(msg)
 	if err != nil {
