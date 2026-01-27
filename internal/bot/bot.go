@@ -221,11 +221,12 @@ func (b *Bot) handleSiteLinkNo(query *tgbotapi.CallbackQuery, user *storage.User
 		log.Printf("Error updating FSM state to Idle for user %d: %v", user.TelegramID, err)
 	}
 
-	// Get the user's session before clearing it to know the previous state
+	// Check if user had an active session before the site offer (to include "В начало" button)
 	session, err := b.storage.GetUserSession(user.TelegramID)
 	if err != nil {
 		log.Printf("Error getting user session for user %d: %v", user.TelegramID, err)
 	} else if session != nil && session.ScenarioID != nil && session.CurrentStepKey != nil {
+		// User had a session, so they should be able to return to the beginning
 		// Restore the user's session to continue the scenario they were in
 		// Set the FSM state back to the idle state (which would trigger the normal behavior)
 		if err := b.storage.UpdateUserFSMState(user.TelegramID, string(fsm.StateIdle)); err != nil {
@@ -233,7 +234,17 @@ func (b *Bot) handleSiteLinkNo(query *tgbotapi.CallbackQuery, user *storage.User
 		}
 	}
 
+	// Always show the decline message with "В начало" button
 	msg := tgbotapi.NewMessage(query.Message.Chat.ID, fsm.GetSiteLinkDeclinedMessage())
+
+	// Add "В начало" button to return to scenario selection
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("В начало", "site_link_back_to_start"),
+		),
+	)
+	msg.ReplyMarkup = keyboard
+
 	sentMsg, err := b.api.Send(msg)
 	if err != nil {
 		log.Printf("Error sending decline message for user %d: %v", user.TelegramID, err)
