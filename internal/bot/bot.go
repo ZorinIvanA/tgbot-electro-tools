@@ -117,7 +117,6 @@ func (b *Bot) handleMessage(message *tgbotapi.Message) {
 		return
 	}
 
-
 	// Get settings
 	settings, err := b.storage.GetSettings()
 	if err != nil {
@@ -128,9 +127,15 @@ func (b *Bot) handleMessage(message *tgbotapi.Message) {
 
 	// Check if we should offer site link
 	log.Printf("DEBUG: Checking if user %d should be offered site link. MessageCount: %d, TriggerMessageCount: %d, FSMState: %s", user.TelegramID, user.MessageCount, settings.TriggerMessageCount, user.FSMState)
-	if user.MessageCount == settings.TriggerMessageCount && user.FSMState == string(fsm.StateIdle) {
-		log.Printf("DEBUG: Offering site link to user %d", user.TelegramID)
+	if user.MessageCount >= settings.TriggerMessageCount {
+		// Offer site link if the user has reached the trigger message count
+		// We ignore FSM state to ensure users who only click buttons get the site link
+		log.Printf("DEBUG: Offering site link to user %d because message count reached limit", user.TelegramID)
 		b.offerSiteLink(message.Chat.ID, user)
+		// Reset message count after offering site link
+		if err := b.storage.ResetUserMessageCount(message.From.ID); err != nil {
+			log.Printf("Error resetting message count for user %d: %v", message.From.ID, err)
+		}
 		return
 	}
 
@@ -255,7 +260,7 @@ func (b *Bot) offerSiteLink(chatID int64, user *storage.User) {
 // handleCallbackQuery handles button callbacks
 func (b *Bot) handleCallbackQuery(query *tgbotapi.CallbackQuery) {
 	log.Printf("DEBUG: handleCallbackQuery called for user %d with data: %s", query.From.ID, query.Data)
-	
+
 	// Check rate limit
 	allowed, err := b.storage.CheckRateLimit(query.From.ID, b.rateLimitPerMin)
 	if err != nil {
@@ -267,7 +272,7 @@ func (b *Bot) handleCallbackQuery(query *tgbotapi.CallbackQuery) {
 		log.Printf("Rate limit exceeded for user %d", query.From.ID)
 		return
 	}
-	
+
 	// Get user
 	user, err := b.storage.GetUser(query.From.ID)
 	if err != nil {
@@ -527,7 +532,6 @@ func (b *Bot) handleEmailConfirm(query *tgbotapi.CallbackQuery, user *storage.Us
 	email := strings.TrimPrefix(query.Data, "email_confirm_")
 	log.Printf("DEBUG: Parsed email for user %d: %s", user.TelegramID, email)
 
-
 	// Save email temporarily and show consent buttons
 	if err := b.storage.UpdateUserEmail(user.TelegramID, email, false); err != nil {
 		log.Printf("Error saving email for user %d: %v", user.TelegramID, err)
@@ -770,7 +774,6 @@ func (b *Bot) handleAction(query *tgbotapi.CallbackQuery, user *storage.User) {
 		actionKey := parts[2]
 
 		log.Printf("DEBUG: Parsed action for user %d: scenarioID=%d, actionKey=%s", user.TelegramID, scenarioID, actionKey)
-
 
 		step, err := b.storage.GetFSMScenarioStep(scenarioID, actionKey)
 		if err != nil {
