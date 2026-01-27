@@ -171,14 +171,35 @@ func (b *Bot) handleCallbackQuery(query *tgbotapi.CallbackQuery) {
 
 func (b *Bot) handleSiteLinkYes(query *tgbotapi.CallbackQuery, user *storage.User) {
 	log.Printf("handleSiteLinkYes called for user %d", user.TelegramID)
-	if err := b.storage.UpdateUserFSMState(user.TelegramID, string(fsm.StateAwaitingEmail)); err != nil {
-		log.Printf("Error updating FSM state to AwaitingEmail for user %d: %v", user.TelegramID, err)
+
+	settings, err := b.storage.GetSettings()
+	if err != nil {
+		log.Printf("Error getting settings for user %d: %v", user.TelegramID, err)
+		return
 	}
 
-	msg := tgbotapi.NewMessage(query.Message.Chat.ID, fsm.GetEmailRequestMessage())
+	// Store the current state before redirecting
+	// But we actually don't want to change to AwaitingEmail state here,
+	// we want to show the site and set the site state directly
+
+	if err := b.storage.UpdateUserFSMState(user.TelegramID, string(fsm.StateOfferingSitePost)); err != nil {
+		log.Printf("Error updating FSM state to OfferingSitePost for user %d: %v", user.TelegramID, err)
+	}
+
+	// Instead of going to email, go directly to show the site URL
+	msg := tgbotapi.NewMessage(query.Message.Chat.ID, fsm.GetSiteLinkOfferPost(settings.SiteURL))
+
+	// Add "В начало" button to return to scenario selection
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("В начало", "site_link_back_to_start"),
+		),
+	)
+	msg.ReplyMarkup = keyboard
+
 	sentMsg, err := b.api.Send(msg)
 	if err != nil {
-		log.Printf("Error sending email request for user %d: %v", user.TelegramID, err)
+		log.Printf("Error sending site link for user %d: %v", user.TelegramID, err)
 		return
 	}
 
@@ -200,6 +221,18 @@ func (b *Bot) handleSiteLinkNo(query *tgbotapi.CallbackQuery, user *storage.User
 		log.Printf("Error updating FSM state to Idle for user %d: %v", user.TelegramID, err)
 	}
 
+	// Get the user's session before clearing it to know the previous state
+	session, err := b.storage.GetUserSession(user.TelegramID)
+	if err != nil {
+		log.Printf("Error getting user session for user %d: %v", user.TelegramID, err)
+	} else if session != nil && session.ScenarioID != nil && session.CurrentStepKey != nil {
+		// Restore the user's session to continue the scenario they were in
+		// Set the FSM state back to the idle state (which would trigger the normal behavior)
+		if err := b.storage.UpdateUserFSMState(user.TelegramID, string(fsm.StateIdle)); err != nil {
+			log.Printf("Error updating FSM state to Idle for user %d: %v", user.TelegramID, err)
+		}
+	}
+
 	msg := tgbotapi.NewMessage(query.Message.Chat.ID, fsm.GetSiteLinkDeclinedMessage())
 	sentMsg, err := b.api.Send(msg)
 	if err != nil {
@@ -213,30 +246,55 @@ func (b *Bot) handleSiteLinkNo(query *tgbotapi.CallbackQuery, user *storage.User
 	log.Printf("handleSiteLinkNo finished for user %d", user.TelegramID)
 }
 
-func (b *Bot) handleSiteLinkYesPost(query *tgbotapi.CallbackQuery, user *storage.User, settings *storage.Settings) {
-	log.Printf("handleSiteLinkYesPost called for user %d. Current MessageCount: %d", user.TelegramID, user.MessageCount)
+func (b *Bot) handleSiteLinkBackToStart(query *tgbotapi.CallbackQuery, user *storage.User) {
+	log.Printf("handleSiteLinkBackToStart called for user %d", user.TelegramID)
+
+	// Reset user's message count
 	if err := b.storage.ResetUserMessageCount(user.TelegramID); err != nil {
 		log.Printf("Error resetting user message count for user %d: %v", user.TelegramID, err)
 	} else {
 		log.Printf("Called ResetUserMessageCount for user %d", user.TelegramID)
 	}
 
-	if err := b.storage.UpdateUserFSMState(user.TelegramID, string(fsm.StateOfferingSitePost)); err != nil {
-		log.Printf("Error updating FSM state to OfferingSitePost for user %d: %v", user.TelegramID, err)
+	// Reset user's session to start from the beginning
+	if err := b.storage.DeleteUserSession(user.TelegramID); err != nil {
+		log.Printf("Error clearing session for user %d: %v", user.TelegramID, err)
 	}
 
-	msg := tgbotapi.NewMessage(query.Message.Chat.ID, fsm.GetSiteLinkOfferPost(settings.SiteURL))
+	// Reset state to Idle
+	if err := b.storage.UpdateUserFSMState(user.TelegramID, string(fsm.StateIdle)); err != nil {
+		log.Printf("Error updating FSM state to Idle for user %d: %v", user.TelegramID, err)
+	}
+
+	// Send the initial welcome message with scenario selection buttons
+	msg := tgbotapi.NewMessage(query.Message.Chat.ID, fsm.GetStartMessage())
+	scenariosButtons, err := b.fsm.GetScenariosButtons()
+	if err != nil {
+		log.Printf("Error getting scenarios buttons for user %d: %v", user.TelegramID, err)
+	} else if len(scenariosButtons) > 0 {
+		keyboard := b.createInlineKeyboard(scenariosButtons)
+		msg.ReplyMarkup = keyboard
+	}
 
 	sentMsg, err := b.api.Send(msg)
 	if err != nil {
-		log.Printf("Error sending site link post for user %d: %v", user.TelegramID, err)
+		log.Printf("Error sending start message for user %d: %v", user.TelegramID, err)
 		return
 	}
 
 	if err := b.storage.LogMessage(user.TelegramID, sentMsg.Text, "outgoing"); err != nil {
 		log.Printf("Error logging outgoing message for user %d: %v", user.TelegramID, err)
 	}
-	log.Printf("handleSiteLinkYesPost finished for user %d", user.TelegramID)
+
+	log.Printf("handleSiteLinkBackToStart finished for user %d", user.TelegramID)
+}
+
+func (b *Bot) handleSiteLinkYesPost(query *tgbotapi.CallbackQuery, user *storage.User, settings *storage.Settings) {
+	log.Printf("handleSiteLinkYesPost called for user %d. Current MessageCount: %d", user.TelegramID, user.MessageCount)
+	// This function is no longer needed after changes
+	// We're now redirecting directly to the site URL display from handleSiteLinkYes
+	// Keeping it for potential backward compatibility, but it won't be used
+	log.Printf("handleSiteLinkYesPost finished for user %d (no longer used)", user.TelegramID)
 }
 
 func (b *Bot) handleSiteLinkNoPost(query *tgbotapi.CallbackQuery, user *storage.User, settings *storage.Settings) {
@@ -762,6 +820,8 @@ func (b *Bot) processCallbackQuery(query *tgbotapi.CallbackQuery, user *storage.
 		b.handleSiteLinkYes(query, user)
 	case "site_link_no":
 		b.handleSiteLinkNo(query, user)
+	case "site_link_back_to_start":
+		b.handleSiteLinkBackToStart(query, user)
 	case "site_link_yes_post":
 		b.handleSiteLinkYesPost(query, user, settings)
 	case "site_link_no_post":
